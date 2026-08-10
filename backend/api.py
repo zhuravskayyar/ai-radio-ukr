@@ -118,8 +118,13 @@ def _chat_completion(spec, system_prompt, request_text, temperature, top_p, max_
                         "provider": spec["name"],
                         "candidate": "",
                         "error": f"{spec['name']}: empty content in chat response",
+                        "error_kind": "invalid_response",
+                        "status_code": 200,
                     }
-            return {"provider": spec["name"], "candidate": candidate, "error": ""}
+            return {
+                "provider": spec["name"], "candidate": candidate, "error": "",
+                "error_kind": "", "status_code": 200,
+            }
         except urllib.error.HTTPError as exc:
             details = ""
             try:
@@ -155,12 +160,27 @@ def _chat_completion(spec, system_prompt, request_text, temperature, top_p, max_
                 "provider": spec["name"],
                 "candidate": "",
                 "error": f"{spec['name']} HTTP {exc.code}{suffix}",
+                "error_kind": (
+                    "auth" if exc.code in {401, 403}
+                    else "credit" if exc.code == 402
+                    else "rate_limit" if exc.code == 429
+                    else "server" if exc.code >= 500
+                    else "request"
+                ),
+                "status_code": int(exc.code),
             }
         except Exception as exc:
+            detail = str(exc)
+            error_kind = (
+                "timeout" if "timed out" in detail.casefold()
+                else "network"
+            )
             return {
                 "provider": spec["name"],
                 "candidate": "",
-                "error": f"{spec['name']}: {exc}",
+                "error": f"{spec['name']}: {detail}",
+                "error_kind": error_kind,
+                "status_code": 0,
             }
 
 
@@ -880,6 +900,8 @@ class RadioAPI:
         # Off by default: scripts/tests construct RadioAPI too, and must never
         # trigger a real os._exit()/process relaunch as a side effect.
         self._enable_auto_restart = enable_auto_restart
+        self._provider_health_lock = threading.RLock()
+        self._provider_health = self._load_provider_health()
         self.updater = UpdateManager(root)
         self._prepare_ai_session()
         self._last_intro_style = ""
@@ -914,6 +936,7 @@ class RadioAPI:
             self.root,
             discoverer=self._discover_queue_track,
             discovery_available=lambda: bool(self._ai_providers(self.db.settings())),
+            provider_status=self.provider_health,
         )
 
     def _sync_host_prompt_version(self):
@@ -960,7 +983,9 @@ class RadioAPI:
             "the translated text."
         )
         for spec in self._ai_providers(settings):
-            response = _chat_completion(spec, system_prompt, text, 0.0, 1.0, 200)
+            response = self._provider_chat_completion(
+                spec, system_prompt, text, 0.0, 1.0, 200,
+            )
             candidate = response.get("candidate", "").strip().strip('"').strip()
             if candidate:
                 self.db.save_settings({
@@ -1458,6 +1483,191 @@ class RadioAPI:
             return configured
         return next((key for key in self._file_keys() if key.startswith("sk-or-")), "")
 
+    def _load_provider_health(self):
+        """Load persisted provider circuit breakers without storing secrets."""
+        try:
+            payload = json.loads(self.db.settings().get("provider_health", "{}") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            str(key): dict(value)
+            for key, value in payload.items()
+            if isinstance(value, dict)
+        }
+
+    def _save_provider_health(self):
+        with self._provider_health_lock:
+            payload = json.dumps(self._provider_health, ensure_ascii=False)
+        self.db.save_settings({"provider_health": payload})
+
+    @staticmethod
+    def _provider_health_key(spec):
+        raw = "\0".join((
+            str(spec.get("provider_type") or spec.get("name") or "ai"),
+            str(spec.get("url") or ""),
+            str(spec.get("model") or ""),
+            str(spec.get("key") or ""),
+        ))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _provider_label(spec):
+        name = str(spec.get("name") or "AI")
+        url = str(spec.get("url") or "").casefold()
+        provider_type = str(spec.get("provider_type") or name).casefold()
+        if provider_type == "nvidia" or name.casefold().startswith("nvidia"):
+            suffix = name.removeprefix("nvidia")
+            return f"NVIDIA{suffix}"
+        if "openrouter.ai" in url:
+            return "OpenRouter"
+        return name
+
+    @staticmethod
+    def _provider_failure_policy(response):
+        kind = str(response.get("error_kind") or "").casefold()
+        raw = str(response.get("error") or "").casefold()
+        if not kind:
+            if "http 401" in raw or "http 403" in raw:
+                kind = "auth"
+            elif "http 402" in raw or "credit" in raw:
+                kind = "credit"
+            elif "http 429" in raw or "rate limit" in raw:
+                kind = "rate_limit"
+            elif "timed out" in raw or "timeout" in raw:
+                kind = "timeout"
+            elif "empty content" in raw or "invalid" in raw:
+                kind = "invalid_response"
+            else:
+                kind = "network"
+        policies = {
+            "auth": ("disabled", 0, "ключ відхилено; імпортуйте новий ключ"),
+            "credit": ("disabled", 0, "немає доступного ліміту або кредитів"),
+            "rate_limit": ("cooldown", 15 * 60, "досягнуто ліміт запитів"),
+            "timeout": ("cooldown", 5 * 60, "сервіс не відповів вчасно"),
+            "server": ("cooldown", 5 * 60, "сервіс тимчасово недоступний"),
+            "invalid_response": ("cooldown", 10 * 60, "отримано некоректну відповідь"),
+            "request": ("cooldown", 30 * 60, "запит відхилено сервісом"),
+            "network": ("cooldown", 5 * 60, "немає стабільного з’єднання із сервісом"),
+        }
+        return policies.get(kind, policies["network"])
+
+    def _provider_record(self, spec):
+        key = self._provider_health_key(spec)
+        expired = False
+        with self._provider_health_lock:
+            record = dict(self._provider_health.get(key) or {})
+            if (
+                record.get("state") == "cooldown"
+                and float(record.get("retry_at") or 0) <= time.time()
+            ):
+                self._provider_health.pop(key, None)
+                record = {}
+                expired = True
+        if expired:
+            self._save_provider_health()
+        return key, record
+
+    def _provider_available(self, spec):
+        _key, record = self._provider_record(spec)
+        return not record or record.get("state") not in {"disabled", "cooldown"}
+
+    def _record_provider_failure(self, spec, response):
+        state, delay, reason = self._provider_failure_policy(response)
+        key = self._provider_health_key(spec)
+        with self._provider_health_lock:
+            previous = self._provider_health.get(key) or {}
+            failures = int(previous.get("failures") or 0) + 1
+            self._provider_health[key] = {
+                "provider": self._provider_label(spec),
+                "state": state,
+                "reason": reason,
+                "retry_at": time.time() + delay if delay else 0,
+                "failures": failures,
+            }
+        self._save_provider_health()
+        LOGGER.warning(
+            "AI provider circuit breaker: provider=%s state=%s reason=%s",
+            self._provider_label(spec), state, reason,
+        )
+        return reason
+
+    def _record_provider_success(self, spec):
+        key = self._provider_health_key(spec)
+        changed = False
+        with self._provider_health_lock:
+            if key in self._provider_health:
+                self._provider_health.pop(key, None)
+                changed = True
+        if changed:
+            self._save_provider_health()
+
+    def _reset_provider_health(self, provider_names=None):
+        names = {str(value).casefold() for value in (provider_names or [])}
+        with self._provider_health_lock:
+            if not names:
+                self._provider_health.clear()
+            else:
+                self._provider_health = {
+                    key: value for key, value in self._provider_health.items()
+                    if not any(
+                        str(value.get("provider") or "").casefold().startswith(name)
+                        for name in names
+                    )
+                }
+        self._save_provider_health()
+
+    def _provider_chat_completion(
+        self, spec, system_prompt, request_text, temperature, top_p, max_tokens,
+    ):
+        label = self._provider_label(spec)
+        _key, record = self._provider_record(spec)
+        if record and record.get("state") in {"disabled", "cooldown"}:
+            return {
+                "provider": spec.get("name", label),
+                "candidate": "",
+                "error": f"{label}: {record.get('reason') or 'тимчасово недоступний'}",
+                "public_error": f"{label}: {record.get('reason') or 'тимчасово недоступний'}",
+                "error_kind": "circuit_open",
+                "skipped": True,
+            }
+        response = _chat_completion(
+            spec, system_prompt, request_text, temperature, top_p, max_tokens,
+        )
+        if response.get("error"):
+            technical_error = str(response.get("error") or "")
+            reason = self._record_provider_failure(spec, response)
+            response["technical_error"] = technical_error
+            response["public_error"] = f"{label}: {reason}"
+            response["error"] = response["public_error"]
+        else:
+            self._record_provider_success(spec)
+        return response
+
+    def provider_health(self):
+        providers = self._ai_providers(self.db.settings())
+        snapshots = []
+        persist_expired = False
+        for spec in providers:
+            key = self._provider_health_key(spec)
+            with self._provider_health_lock:
+                before = key in self._provider_health
+            _key, record = self._provider_record(spec)
+            if before and not record:
+                persist_expired = True
+            retry = max(0, round(float(record.get("retry_at") or 0) - time.time()))
+            snapshots.append({
+                "name": str(spec.get("name") or "AI"),
+                "label": self._provider_label(spec),
+                "state": str(record.get("state") or "ready"),
+                "message": str(record.get("reason") or "доступний"),
+                "retry_in_seconds": retry,
+            })
+        if persist_expired:
+            self._save_provider_health()
+        return snapshots
+
     def _ai_providers(self, settings=None):
         settings = settings or self.db.settings()
         providers = []
@@ -1583,7 +1793,9 @@ class RadioAPI:
                     {"purpose": "deepseek connectivity test"},
                     ensure_ascii=False,
                 )
-                response = _chat_completion(spec, system_prompt, request_text, 0.0, 0.0, 60)
+                response = self._provider_chat_completion(
+                    spec, system_prompt, request_text, 0.0, 0.0, 60,
+                )
                 if response.get("error"):
                     return {
                         "ok": False,
@@ -1780,6 +1992,9 @@ class RadioAPI:
         if found["YouTube"]:
             values["youtube_api_key"] = found["YouTube"]
         self.db.save_settings(values)
+        # Re-importing a credential is the explicit user action that closes a
+        # permanent auth/credit circuit and allows that provider to be tested.
+        self._reset_provider_health(completion_providers)
         providers = completion_providers + (["YouTube"] if found["YouTube"] else [])
         return {
             "ok": True,
@@ -1806,6 +2021,17 @@ class RadioAPI:
                 values.pop(key)
         previous = self.db.settings()
         self.db.save_settings(values)
+        reset_providers = []
+        if str(values.get("nvidia_api_key") or "").strip() and (
+            str(values.get("nvidia_api_key")) != str(previous.get("nvidia_api_key"))
+        ):
+            reset_providers.append("nvidia")
+        if str(values.get("secondary_api_key") or "").strip() and (
+            str(values.get("secondary_api_key")) != str(previous.get("secondary_api_key"))
+        ):
+            reset_providers.append("openrouter")
+        if reset_providers:
+            self._reset_provider_health(reset_providers)
         if (
             "use_styletts" in values
             and str(values["use_styletts"]) != str(previous.get("use_styletts", "1"))
@@ -1882,41 +2108,40 @@ class RadioAPI:
         def worker():
             time.sleep(delay)
             try:
-                self._terminate_other_instances()
+                self.shutdown()
             except Exception:
-                LOGGER.exception("Failed to terminate other LUMEN instances before restart")
+                LOGGER.exception("Failed to stop Vector Radio cleanly before restart")
             try:
-                self._launch_new_instance()
+                self._launch_restart_helper()
             except Exception:
-                LOGGER.exception("Failed to relaunch LUMEN Radio after style change")
+                LOGGER.exception("Failed to start Vector Radio restart helper")
             os._exit(0)
 
         threading.Thread(target=worker, daemon=True, name="lumen-restart").start()
 
-    def _terminate_other_instances(self):
-        current_pid = os.getpid()
-        script = (
-            "Get-CimInstance Win32_Process "
-            "| Where-Object { $_.CommandLine -match 'main\\.py' -and $_.ProcessId -ne %d } "
-            "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-        ) % current_pid
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", script],
-            cwd=str(self.root),
-            timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-
-    def _launch_new_instance(self):
+    def _launch_restart_helper(self):
+        helper = self.root / "backend" / "restart_helper.py"
+        if not helper.is_file():
+            raise FileNotFoundError(helper)
+        interpreter = Path(sys.executable)
+        console_python = interpreter.with_name("python.exe")
+        if console_python.is_file():
+            interpreter = console_python
         creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
         subprocess.Popen(
-            [sys.executable, str(self.root / "main.py")],
+            [
+                str(interpreter), str(helper),
+                "--pid", str(os.getpid()),
+                "--root", str(self.root),
+            ],
             cwd=str(self.root),
             creationflags=creationflags,
             close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
     def radio_queue_status(self):
@@ -2242,7 +2467,7 @@ darkwave чи post-punk: українська та російськомовна 
             with ThreadPoolExecutor(max_workers=len(providers)) as executor:
                 futures = {
                     executor.submit(
-                        _chat_completion, spec, system_prompt,
+                        self._provider_chat_completion, spec, system_prompt,
                         provider_request_text(spec, index),
                         0.15, 0.75, search_max_tokens,
                     ): spec
@@ -2294,7 +2519,7 @@ darkwave чи post-punk: українська та російськомовна 
 формату {"tracks":[{"artist":"...","title":"..."}]}. Рівно 5 реальних,
 відомих, офіційно виданих треків під заданий стиль. Без reason, Markdown і тексту
 поза JSON. Не повторюй excludeTracks."""
-                    repaired = _chat_completion(
+                    repaired = self._provider_chat_completion(
                         spec, repair_prompt, request_text, 0.1, 0.7, search_max_tokens,
                     )
                     if repaired.get("error"):
@@ -2401,8 +2626,15 @@ darkwave чи post-punk: українська та російськомовна 
             return chosen
         if not providers:
             raise RuntimeError("Для добору музики не налаштовано AI-провайдера")
+        friendly_errors = list(dict.fromkeys(
+            str(error)[:180] for error in errors if error
+        ))
         raise RuntimeError(
-            "; ".join(errors) or "AI не повернув конкретних виконавців і назв треків"
+            "Жоден доступний AI-провайдер не зміг підібрати музику. "
+            + (
+                "; ".join(friendly_errors)
+                if friendly_errors else "Спробую знову пізніше."
+            )
         )
 
     @staticmethod
@@ -2791,6 +3023,10 @@ darkwave чи post-punk: українська та російськомовна 
 
         prepared = Path(downloaded["path"]).resolve()
         info = downloaded.get("info") or {}
+        self._set_queue_progress(
+            "verifying", 95, "Перевіряю завантажений аудіофайл",
+            track=candidate.get("query", ""),
+        )
         try:
             relative = prepared.relative_to(self.root.resolve()).as_posix()
         except ValueError as exc:

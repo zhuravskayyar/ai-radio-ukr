@@ -55,18 +55,18 @@ class UpdateManagerTests(unittest.TestCase):
             checksum_url = "https://github.com/example/download/patch.exe.sha256"
             expected = hashlib.sha256(patch_data).hexdigest().encode("ascii")
             opener = FakeOpener({
-                LATEST_RELEASE_URL: release_payload("1.0.3", patch_url, checksum_url),
+                LATEST_RELEASE_URL: release_payload("1.0.4", patch_url, checksum_url),
                 patch_url: patch_data,
-                checksum_url: expected + b"  Vector_Radio_Patch_1.0.3.exe\n",
+                checksum_url: expected + b"  Vector_Radio_Patch_1.0.4.exe\n",
             })
-            manager = UpdateManager(Path(directory), "1.0.2", opener=opener)
+            manager = UpdateManager(Path(directory), "1.0.3", opener=opener)
 
             manager._check_worker()
 
             status = manager.status()
             self.assertTrue(status["ready"])
             self.assertEqual(status["stage"], "ready")
-            self.assertEqual(status["latest_version"], "1.0.3")
+            self.assertEqual(status["latest_version"], "1.0.4")
             self.assertEqual(manager.patch_path().read_bytes(), patch_data)
 
     def test_invalid_checksum_is_rejected_and_partial_file_removed(self):
@@ -74,11 +74,11 @@ class UpdateManagerTests(unittest.TestCase):
             patch_url = "https://github.com/example/download/patch.exe"
             checksum_url = "https://github.com/example/download/patch.exe.sha256"
             opener = FakeOpener({
-                LATEST_RELEASE_URL: release_payload("1.0.3", patch_url, checksum_url),
+                LATEST_RELEASE_URL: release_payload("1.0.4", patch_url, checksum_url),
                 patch_url: b"tampered",
                 checksum_url: b"0" * 64,
             })
-            manager = UpdateManager(Path(directory), "1.0.2", opener=opener)
+            manager = UpdateManager(Path(directory), "1.0.3", opener=opener)
 
             manager._check_worker()
 
@@ -92,12 +92,12 @@ class UpdateManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             opener = FakeOpener({
                 LATEST_RELEASE_URL: release_payload(
-                    "1.0.3",
+                    "1.0.4",
                     "https://github.com/example/download/patch.exe",
                     "https://github.com/example/download/patch.exe.sha256",
                 ),
             })
-            manager = UpdateManager(Path(directory), "1.0.3", opener=opener)
+            manager = UpdateManager(Path(directory), "1.0.4", opener=opener)
 
             manager._check_worker()
 

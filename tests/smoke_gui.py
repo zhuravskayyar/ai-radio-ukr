@@ -41,6 +41,20 @@ def silent_wav_data_uri(seconds=2.0, sample_rate=8000):
 
 
 class SmokeAPI(RadioAPI):
+    def provider_health(self):
+        return [
+            {
+                "name": "secondary", "label": "OpenRouter",
+                "state": "disabled", "message": "немає кредитів",
+                "retry_in_seconds": 0,
+            },
+            {
+                "name": "nvidia", "label": "NVIDIA",
+                "state": "cooldown", "message": "таймаут",
+                "retry_in_seconds": 300,
+            },
+        ]
+
     def bootstrap(self):
         result = super().bootstrap()
         result["settings"].update({
@@ -265,6 +279,8 @@ def verify():
           localRows: [...document.querySelectorAll('#trackTable .badge')]
             .filter(node => node.textContent.includes('ЗАВАНТАЖЕНО')).length,
           downloadMonitor: !!document.querySelector('#downloadProgressBar'),
+          providerChips: document.querySelectorAll('#providerStatusList .providerStatus').length,
+          providerText: document.querySelector('#providerStatusList').textContent,
           updateMonitor: !!document.querySelector('#updateProgressBar'),
           sizeText: document.querySelector('#librarySizeText').textContent,
           corroboratedStoryBadges: [...document.querySelectorAll('#trackTable .badge')]
@@ -342,6 +358,9 @@ def verify():
         assert library["active"] is True
         assert library["localRows"] >= 1
         assert library["downloadMonitor"] is True
+        assert library["providerChips"] == 2
+        assert "OpenRouter" in library["providerText"]
+        assert "NVIDIA" in library["providerText"]
         assert library["updateMonitor"] is True
         assert "трек" in library["sizeText"]
         assert library["refreshLabel"] == "↻ Оновити AI-бібліотеку"

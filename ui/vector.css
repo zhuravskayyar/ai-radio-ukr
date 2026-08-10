@@ -404,6 +404,33 @@ body.vector-ui {
   background: var(--vector-yellow);
 }
 
+.vector-ui .providerStatusList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.vector-ui .providerStatus {
+  padding: 6px 9px;
+  border: 1px solid var(--vector-line);
+  border-radius: 999px;
+  color: var(--vector-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.vector-ui .providerStatus.ready {
+  border-color: rgba(255, 210, 28, .35);
+  color: var(--vector-yellow);
+}
+
+.vector-ui .providerStatus.cooldown,
+.vector-ui .providerStatus.disabled {
+  border-color: rgba(255, 108, 108, .38);
+  color: #ff8d8d;
+}
+
 .vector-ui #library .table {
   border: 1px solid var(--vector-line);
   border-radius: 14px;

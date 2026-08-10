@@ -100,6 +100,9 @@ DEFAULTS = {
     "secondary_api_url": "https://openrouter.ai/api/v1/chat/completions",
     "secondary_api_key": "",
     "secondary_model": "deepseek/deepseek-v4-flash",
+    # JSON with non-secret circuit-breaker state for temporarily unavailable
+    # AI providers. Credentials are identified only by a short SHA-256 digest.
+    "provider_health": "{}",
 }
 
 

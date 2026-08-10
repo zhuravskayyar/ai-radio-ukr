@@ -10,9 +10,9 @@
 .\packaging\build_installer.ps1
 ```
 
-Результат: `dist\Vector_Radio_Setup_1.0.3.exe`. Setup встановлює програму для поточного користувача, створює ярлик і деінсталятор, завантажує перевірений SHA-256 офіційний embeddable Python 3.11.9, локальний український StyleTTS2 з голосом Адама Вектора та WebView2 лише за його відсутності. Системний Python не змінюється. Для інсталяції потрібні інтернет і приблизно 3 ГБ місця. Повна інструкція й формат API-файлу: [`docs/INSTALL_WINDOWS.md`](docs/INSTALL_WINDOWS.md).
+Результат: `dist\Vector_Radio_Setup_1.0.4.exe`. Setup встановлює програму для поточного користувача, створює ярлик і деінсталятор, завантажує перевірений SHA-256 офіційний embeddable Python 3.11.9, локальний український StyleTTS2 з голосом Адама Вектора та WebView2 лише за його відсутності. Системний Python не змінюється. Для інсталяції потрібні інтернет і приблизно 3 ГБ місця. Повна інструкція й формат API-файлу: [`docs/INSTALL_WINDOWS.md`](docs/INSTALL_WINDOWS.md).
 
-Для вже встановленої версії можна зібрати малий патч без повторного встановлення Python і TTS: `powershell -ExecutionPolicy Bypass -File packaging\build_patch.ps1`. Результат: `dist\Vector_Radio_Patch_1.0.3.exe`; коротка інструкція — [`docs/PATCH_1.0.3.md`](docs/PATCH_1.0.3.md). Починаючи з 1.0.2 програма сама перевіряє GitHub Release, завантажує патч, перевіряє SHA-256 і показує кнопку встановлення у вкладці «Бібліотека».
+Для вже встановленої версії можна зібрати малий патч без повторного встановлення Python і TTS: `powershell -ExecutionPolicy Bypass -File packaging\build_patch.ps1`. Результат: `dist\Vector_Radio_Patch_1.0.4.exe`; коротка інструкція — [`docs/PATCH_1.0.4.md`](docs/PATCH_1.0.4.md). Починаючи з 1.0.2 програма сама перевіряє GitHub Release, завантажує патч, перевіряє SHA-256 і показує кнопку встановлення у вкладці «Бібліотека».
 
 У корені є готовий статичний [`index.html`](index.html) для GitHub Pages або іншого хостингу. Його кнопка веде на останній Windows Setup у GitHub Releases.
 

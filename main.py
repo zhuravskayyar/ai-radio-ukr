@@ -14,9 +14,10 @@ from backend.api import RadioAPI
 
 _CACHEBUST_RE = re.compile(r'(style\.css|library\.css|radio-copy\.css|vector\.css|app\.js)\?v=auto')
 _SINGLE_INSTANCE_MUTEX_NAME = "Global\\VectorRadioSingleInstance"
+_SINGLE_INSTANCE_HANDLE = None
 
 
-def _acquire_single_instance_lock(timeout=6.0, poll=0.25):
+def _acquire_single_instance_lock(timeout=15.0, poll=0.25):
     """Return True if this is the only running instance (Windows named mutex).
 
     Two windows editing the same SQLite settings independently is what makes a
@@ -27,16 +28,37 @@ def _acquire_single_instance_lock(timeout=6.0, poll=0.25):
     """
     if sys.platform != "win32":
         return True
+    global _SINGLE_INSTANCE_HANDLE
     kernel32 = ctypes.windll.kernel32
+    if hasattr(kernel32.CreateMutexW, "argtypes"):
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_bool
     ERROR_ALREADY_EXISTS = 183
     deadline = time.monotonic() + timeout
     while True:
-        kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
+        handle = kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
         if kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+            _SINGLE_INSTANCE_HANDLE = handle
             return True
+        # A failed contender also receives a handle. It must be closed before
+        # waiting, otherwise this new process keeps the old named mutex alive
+        # itself and can never acquire it after the previous app exits.
+        if handle:
+            kernel32.CloseHandle(handle)
         if time.monotonic() >= deadline:
             return False
         time.sleep(poll)
+
+
+def _release_single_instance_lock():
+    global _SINGLE_INSTANCE_HANDLE
+    if sys.platform == "win32" and _SINGLE_INSTANCE_HANDLE:
+        try:
+            ctypes.windll.kernel32.CloseHandle(_SINGLE_INSTANCE_HANDLE)
+        finally:
+            _SINGLE_INSTANCE_HANDLE = None
 
 
 def main():
@@ -170,6 +192,7 @@ def main():
         except Exception:
             logging.exception("Vector Radio shutdown failed")
         server.shutdown()
+        _release_single_instance_lock()
 
 
 if __name__ == "__main__":

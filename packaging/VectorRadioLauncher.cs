@@ -2,14 +2,15 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("Vector Radio")]
 [assembly: AssemblyDescription("Launcher for Vector Radio")]
 [assembly: AssemblyCompany("Vector Radio")]
 [assembly: AssemblyProduct("Vector Radio")]
-[assembly: AssemblyVersion("1.0.3.0")]
-[assembly: AssemblyFileVersion("1.0.3.0")]
+[assembly: AssemblyVersion("1.0.4.0")]
+[assembly: AssemblyFileVersion("1.0.4.0")]
 
 internal static class VectorRadioLauncher
 {
@@ -32,6 +33,7 @@ internal static class VectorRadioLauncher
 
         try
         {
+            StopExistingRadioProcesses(python);
             var startInfo = new ProcessStartInfo
             {
                 FileName = python,
@@ -52,6 +54,46 @@ internal static class VectorRadioLauncher
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
+    }
+
+    private static void StopExistingRadioProcesses(string python)
+    {
+        var expected = Path.GetFullPath(python);
+        foreach (var process in Process.GetProcessesByName("pythonw"))
+        {
+            try
+            {
+                var executable = process.MainModule == null
+                    ? ""
+                    : Path.GetFullPath(process.MainModule.FileName);
+                if (!String.Equals(executable, expected, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var stop = new ProcessStartInfo
+                {
+                    FileName = "taskkill.exe",
+                    Arguments = "/PID " + process.Id + " /T /F",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using (var killer = Process.Start(stop))
+                {
+                    if (killer != null)
+                        killer.WaitForExit(10000);
+                }
+                try { process.WaitForExit(10000); } catch { }
+            }
+            catch
+            {
+                // The process may have closed between enumeration and access.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+        Thread.Sleep(350);
     }
 
     private static string Quote(string value)

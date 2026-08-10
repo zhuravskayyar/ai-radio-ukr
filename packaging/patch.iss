@@ -1,5 +1,5 @@
 #define AppName "Vector Radio Patch"
-#define AppVersion "1.0.3"
+#define AppVersion "1.0.4"
 
 [Setup]
 AppId={{A71517CA-8A77-4CB4-9D40-AD99D801945B}
@@ -30,12 +30,13 @@ Name: "ukrainian"; MessagesFile: "compiler:Languages\Ukrainian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
+Source: "assets\VectorRadio.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\main.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Qwen_python_20260804_4sskbslqs.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\ui\*"; DestDir: "{app}\ui"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\scripts\migrate_local_library.py"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "..\docs\PATCH_1.0.3.md"; DestDir: "{app}"; DestName: "PATCH_1.0.3.md"; Flags: ignoreversion
+Source: "..\docs\PATCH_1.0.4.md"; DestDir: "{app}"; DestName: "PATCH_1.0.4.md"; Flags: ignoreversion
 
 [Run]
 Filename: "{app}\runtime\python.exe"; Parameters: """{app}\tools\migrate_local_library.py"" ""{userdesktop}\localRadio"" ""{app}"""; WorkingDir: "{app}"; StatusMsg: "Перенесення наявної локальної бібліотеки..."; Flags: runhidden waituntilterminated; Check: LegacyLibraryExists

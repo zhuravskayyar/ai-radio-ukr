@@ -1,5 +1,29 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$iconPath = Join-Path $PSScriptRoot "assets\vector-radio.ico"
+$launcherPath = Join-Path $PSScriptRoot "assets\VectorRadio.exe"
+
+& (Join-Path $PSScriptRoot "build_icon.ps1")
+
+$compilerCandidates = @(
+    "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+    "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+)
+$csharpCompiler = $compilerCandidates |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+if (-not $csharpCompiler) {
+    throw "Не знайдено компілятор C# у .NET Framework."
+}
+
+& $csharpCompiler /nologo /target:winexe /platform:x64 /optimize+ `
+    /reference:System.dll /reference:System.Windows.Forms.dll `
+    "/win32icon:$iconPath" "/out:$launcherPath" `
+    (Join-Path $PSScriptRoot "VectorRadioLauncher.cs")
+if ($LASTEXITCODE -ne 0) {
+    throw "Не вдалося зібрати VectorRadio.exe для патча."
+}
+
 $innoCandidates = @(
     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
@@ -23,7 +47,7 @@ finally {
     Pop-Location
 }
 
-$output = Join-Path $projectRoot "dist\Vector_Radio_Patch_1.0.3.exe"
+$output = Join-Path $projectRoot "dist\Vector_Radio_Patch_1.0.4.exe"
 $checksumOutput = "$output.sha256"
 Write-Host "Patch created: $output"
 $hash = Get-FileHash -LiteralPath $output -Algorithm SHA256

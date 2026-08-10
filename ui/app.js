@@ -1015,6 +1015,17 @@ function renderLibrary() {
     if (Number(progress.eta || 0)) details.push(`ще ≈ ${Math.ceil(progress.eta)} с`);
     progressDetails.textContent = details.join(' · ') || 'Автоматичне поповнення бібліотеки ввімкнено';
   }
+  const providerStatusList = $('#providerStatusList');
+  if (providerStatusList) {
+    const providers = state.radioQueue?.providers || [];
+    providerStatusList.innerHTML = providers.map(provider => {
+      const status = String(provider.state || 'ready');
+      const retry = Number(provider.retry_in_seconds || 0);
+      const retryText = retry ? ` · повтор через ${Math.max(1, Math.ceil(retry / 60))} хв` : '';
+      const icon = status === 'ready' ? '●' : status === 'disabled' ? '×' : '○';
+      return `<span class="providerStatus ${esc(status)}" title="${esc(provider.message || '')}">${icon} ${esc(provider.label || provider.name || 'AI')}: ${esc(provider.message || 'доступний')}${retryText}</span>`;
+    }).join('') || '<span class="providerStatus disabled">× Немає налаштованого AI-провайдера</span>';
+  }
   const localTracks = state.tracks.filter(hasPlayable);
   const libraryBytes = localTracks.reduce(
     (total, track) => total + Number(track.file_size_bytes || 0), 0
@@ -1050,8 +1061,9 @@ function renderLibrary() {
     const transfer = Number(progress.downloaded_bytes || 0)
       ? `${formatBytes(progress.downloaded_bytes)}${Number(progress.total_bytes || 0) ? ` / ${formatBytes(progress.total_bytes)}` : ''}`
       : '';
-    const idleDetails = state.radioQueue?.blocked_reason
-      ? `${formatBytes(libraryBytes)} локально · ${state.radioQueue.blocked_reason}`
+    const serviceNotice = state.radioQueue?.blocked_reason || state.radioQueue?.last_error || '';
+    const idleDetails = serviceNotice
+      ? `${formatBytes(libraryBytes)} локально · ${serviceNotice}`
       : `${formatBytes(libraryBytes)} локально · натисніть, щоб відкрити список`;
     $('#mainDownloadDetails').textContent = [currentTrack, transfer]
       .filter(Boolean).join(' · ') || idleDetails;
@@ -2214,7 +2226,9 @@ setInterval(async () => {
         || state.radioQueue?.phase !== snapshot.phase
         || state.radioQueue?.progress?.stage !== snapshot.progress?.stage
         || Math.round(Number(state.radioQueue?.progress?.percent || 0))
-          !== Math.round(Number(snapshot.progress?.percent || 0));
+          !== Math.round(Number(snapshot.progress?.percent || 0))
+        || JSON.stringify(state.radioQueue?.providers || [])
+          !== JSON.stringify(snapshot.providers || []);
       applyRadioQueue(snapshot, shouldAutoStart);
       if (statusChanged) render();
       if (shouldAutoStart && playableIndices().length) {

@@ -14,12 +14,13 @@ class RadioQueueManager:
 
     def __init__(
         self, db, root: Path, discoverer=None, random_source=None,
-        discovery_available=None,
+        discovery_available=None, provider_status=None,
     ):
         self.db = db
         self.root = Path(root)
         self.discoverer = discoverer
         self.discovery_available = discovery_available
+        self.provider_status = provider_status
         self.random = random_source or random.Random()
         self._lock = threading.RLock()
         self._refill_thread = None
@@ -288,6 +289,12 @@ class RadioQueueManager:
         phase = self._phase
         if not thread_running and discovery["blocked_reason"]:
             phase = "blocked" if discovery["requested"] else "disabled"
+        providers = []
+        if self.provider_status is not None:
+            try:
+                providers = list(self.provider_status() or [])
+            except Exception:
+                LOGGER.exception("Could not read AI provider health")
         return {
             "ok": True,
             "items": items,
@@ -309,6 +316,7 @@ class RadioQueueManager:
             "last_error": self._last_error,
             "phase": phase,
             "retry_in_seconds": max(0, round(self._retry_after - time.monotonic())),
+            "providers": providers,
         }
 
     def bootstrap(self, preferred_track_id=None):
@@ -437,9 +445,12 @@ class RadioQueueManager:
                         self._last_error = str(exc)
                         self._phase = "error"
                         self.update_progress(
-                            "error", 0, self._last_error,
+                            "error", 0, self._last_error[:240],
                         )
-                        self._retry_after = time.monotonic() + 5
+                        # Provider circuit breakers already know when an API may
+                        # be tried again. Avoid hammering every failed endpoint
+                        # from the five-second UI polling loop.
+                        self._retry_after = time.monotonic() + 60
                         LOGGER.exception("AI library refill failed")
                 with self._lock:
                     if self._stopping:

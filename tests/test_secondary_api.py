@@ -77,6 +77,93 @@ class SecondaryApiTests(unittest.TestCase):
         )
         self.assertIsNone(_openrouter_affordable_tokens("rate limit exceeded"))
 
+    def test_credit_error_disables_only_that_provider_until_key_reimport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            openrouter = {
+                "name": "secondary",
+                "provider_type": "secondary",
+                "url": "https://openrouter.ai/api/v1/chat/completions",
+                "key": "sk-or-v1-1234567890abcdefghijkl",
+                "model": "deepseek/test",
+            }
+            failure = {
+                "provider": "secondary",
+                "candidate": "",
+                "error": "secondary HTTP 402: technical credit payload",
+                "error_kind": "credit",
+                "status_code": 402,
+            }
+            with patch("backend.api._chat_completion", return_value=failure) as completion:
+                first = api._provider_chat_completion(
+                    openrouter, "system", "request", 0, 1, 100,
+                )
+                second = api._provider_chat_completion(
+                    openrouter, "system", "request", 0, 1, 100,
+                )
+
+            self.assertEqual(completion.call_count, 1)
+            self.assertNotIn("technical credit payload", first["error"])
+            self.assertTrue(second["skipped"])
+            self.assertEqual(api.provider_health(), [])
+
+            imported = api.import_api_text(
+                "OPENROUTER_API_KEY=sk-or-v1-1234567890abcdefghijkl"
+            )
+            self.assertTrue(imported["ok"])
+            provider = next(
+                item for item in api.provider_health()
+                if item["label"] == "OpenRouter"
+            )
+            self.assertEqual(provider["state"], "ready")
+
+    def test_failed_provider_does_not_block_a_working_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            providers = [
+                {
+                    "name": "secondary", "provider_type": "secondary",
+                    "url": "https://openrouter.ai/api/v1/chat/completions",
+                    "key": "openrouter", "model": "deepseek/test",
+                },
+                {
+                    "name": "nvidia", "provider_type": "nvidia",
+                    "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+                    "key": "nvidia", "model": "nvidia/test",
+                },
+            ]
+
+            def completion(spec, *_args):
+                if spec["name"] == "secondary":
+                    return {
+                        "provider": "secondary", "candidate": "",
+                        "error": "secondary HTTP 402: long provider response",
+                        "error_kind": "credit", "status_code": 402,
+                    }
+                return {
+                    "provider": "nvidia",
+                    "candidate": json.dumps({
+                        "tracks": [
+                            {"artist": "Working Artist", "title": "Working Track"},
+                        ],
+                        "similarTracks": [], "targetMood": [], "avoid": [],
+                    }),
+                    "error": "",
+                }
+
+            with patch("backend.api._chat_completion", side_effect=completion):
+                plan = api._queue_search_plan(
+                    {"station_prompt": "alternative rock"}, providers=providers,
+                )
+
+            self.assertEqual(plan["provider"], "nvidia")
+            diagnostics = {
+                item["provider"]: item for item in plan["provider_diagnostics"]
+            }
+            self.assertFalse(diagnostics["secondary"]["ok"])
+            self.assertNotIn("long provider response", diagnostics["secondary"]["error"])
+            self.assertTrue(diagnostics["nvidia"]["ok"])
+
     def test_pasted_nvidia_examples_become_parallel_dj_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

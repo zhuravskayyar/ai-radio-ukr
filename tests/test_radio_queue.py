@@ -461,7 +461,7 @@ class RadioQueueTests(unittest.TestCase):
             self.assertEqual(failed["phase"], "error")
             self.assertEqual(failed["last_error"], "Downloader unavailable")
             self.assertGreater(failed["retry_in_seconds"], 0)
-            self.assertLessEqual(failed["retry_in_seconds"], 5)
+            self.assertLessEqual(failed["retry_in_seconds"], 60)
             queue.request_refill()
             self.assertEqual(len(calls), 1)
 
