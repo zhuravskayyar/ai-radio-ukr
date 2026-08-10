@@ -437,8 +437,9 @@ function updateSettingOutput(key, value) {
 
 function fillSettings() {
   Object.entries(state.settings).forEach(([key, value]) => {
-    const element = $(`[data-setting="${key}"]`);
-    if (element) element.value = value;
+    $$(`[data-setting="${key}"]`).forEach(element => {
+      element.value = value;
+    });
     updateSettingOutput(key, value);
   });
   $('#volume').value = programVolume();
@@ -973,10 +974,13 @@ function renderLibrary() {
     const snapshot = state.radioQueue || {};
     const retry = Number(snapshot.retry_in_seconds || 0);
     const error = String(snapshot.last_error || '').trim();
+    const blocked = String(snapshot.blocked_reason || '').trim();
     libraryStatus.classList.toggle('busy', !!snapshot.refilling);
-    libraryStatus.classList.toggle('error', !!error && !snapshot.refilling);
+    libraryStatus.classList.toggle('error', !!error && !snapshot.refilling && !blocked);
     if (snapshot.refilling) {
       libraryStatus.textContent = 'AI добирає відомий трек і передає його в LUMEN Downloader…';
+    } else if (blocked) {
+      libraryStatus.textContent = blocked;
     } else if (error) {
       const shortError = error.length > 280 ? `${error.slice(0, 277)}…` : error;
       libraryStatus.textContent = `Помилка пошуку: ${shortError}${retry ? ` · повтор через ${retry} с` : ''}`;
@@ -2057,7 +2061,8 @@ setInterval(async () => {
   try {
     let snapshot = await api.radio_queue_status();
     if (
-      snapshot?.ok && snapshot.size <= snapshot.refill_threshold
+      snapshot?.ok && snapshot.discovery_enabled
+      && snapshot.size <= snapshot.refill_threshold
       && !snapshot.refilling && typeof api.request_radio_queue_refill === 'function'
     ) {
       snapshot = await api.request_radio_queue_refill();

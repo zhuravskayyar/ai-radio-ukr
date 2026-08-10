@@ -382,9 +382,32 @@ class RadioQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db, root = self.make_library(directory, count=4)
             queue = RadioQueueManager(db, root)
-            self.assertFalse(queue.status()["discovery_enabled"])
+            blocked = queue.status()
+            self.assertFalse(blocked["discovery_enabled"])
+            self.assertTrue(blocked["discovery_requested"])
+            self.assertFalse(blocked["rights_confirmed"])
+            self.assertIn("підтвердження", blocked["blocked_reason"].casefold())
             db.save_settings({"licensed_sources_confirmed": "1"})
-            self.assertTrue(queue.status()["discovery_enabled"])
+            enabled = queue.status()
+            self.assertTrue(enabled["discovery_enabled"])
+            self.assertTrue(enabled["rights_confirmed"])
+            self.assertEqual(enabled["blocked_reason"], "")
+
+    def test_blocked_poll_does_not_spawn_refill_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db, root = self.make_library(directory, count=0)
+            calls = []
+            queue = RadioQueueManager(
+                db, root, discoverer=lambda excluded: calls.append(excluded),
+            )
+
+            for _ in range(3):
+                snapshot = queue.request_refill()
+
+            self.assertEqual(snapshot["phase"], "blocked")
+            self.assertFalse(snapshot["refilling"])
+            self.assertEqual(calls, [])
+            self.assertIsNone(queue._refill_thread)
 
     def test_empty_ai_library_starts_downloading_during_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:

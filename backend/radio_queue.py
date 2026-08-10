@@ -32,11 +32,31 @@ class RadioQueueManager:
         return max(minimum, min(maximum, value))
 
     def _enabled_discovery(self):
+        state = self._discovery_state()
+        return state["requested"] and state["rights_confirmed"]
+
+    def _discovery_state(self):
         settings = self.db.settings()
-        enabled = str(settings.get("dynamic_discovery_enabled", "0")).casefold()
-        licensed = str(settings.get("licensed_sources_confirmed", "0")).casefold()
-        return enabled in {"1", "true", "yes", "on"} and licensed in {
-            "1", "true", "yes", "on",
+        truthy = {"1", "true", "yes", "on"}
+        requested = str(
+            settings.get("dynamic_discovery_enabled", "0")
+        ).casefold() in truthy
+        rights_confirmed = str(
+            settings.get("licensed_sources_confirmed", "0")
+        ).casefold() in truthy
+        if not requested:
+            blocked_reason = "AI-пошук треків вимкнений у налаштуваннях"
+        elif not rights_confirmed:
+            blocked_reason = (
+                "Пошук готовий, але потрібне підтвердження права "
+                "завантажувати й відтворювати вибрані джерела"
+            )
+        else:
+            blocked_reason = ""
+        return {
+            "requested": requested,
+            "rights_confirmed": rights_confirmed,
+            "blocked_reason": blocked_reason,
         }
 
     def _target(self):
@@ -212,6 +232,11 @@ class RadioQueueManager:
         tracks = {track["id"]: track for track in self.db.tracks()}
         items = [tracks[entry["track_id"]] for entry in entries if entry["track_id"] in tracks]
         target, refill, critical = self._thresholds()
+        discovery = self._discovery_state()
+        thread_running = bool(self._refill_thread and self._refill_thread.is_alive())
+        phase = self._phase
+        if not thread_running and discovery["blocked_reason"]:
+            phase = "blocked" if discovery["requested"] else "disabled"
         return {
             "ok": True,
             "items": items,
@@ -219,10 +244,15 @@ class RadioQueueManager:
             "target": target,
             "refill_threshold": refill,
             "critical_threshold": critical,
-            "refilling": bool(self._refill_thread and self._refill_thread.is_alive()),
-            "discovery_enabled": self._enabled_discovery(),
+            "refilling": thread_running,
+            "discovery_enabled": (
+                discovery["requested"] and discovery["rights_confirmed"]
+            ),
+            "discovery_requested": discovery["requested"],
+            "rights_confirmed": discovery["rights_confirmed"],
+            "blocked_reason": discovery["blocked_reason"],
             "last_error": self._last_error,
-            "phase": self._phase,
+            "phase": phase,
             "retry_in_seconds": max(0, round(self._retry_after - time.monotonic())),
         }
 
@@ -291,6 +321,12 @@ class RadioQueueManager:
     def request_refill(self, force=False):
         with self._lock:
             if self._stopping:
+                return self._snapshot()
+            if not self._enabled_discovery():
+                # The UI polls this method frequently. Do not create a short-lived
+                # worker every five seconds while the explicit rights gate is off.
+                self._last_error = ""
+                self._phase = "blocked"
                 return self._snapshot()
             if self._refill_thread and self._refill_thread.is_alive():
                 return self._snapshot()

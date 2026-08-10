@@ -312,7 +312,8 @@ body.vector-ui {
   color: var(--vector-muted);
 }
 
-.vector-ui .settingsGrid .simple-settings-card textarea {
+.vector-ui .settingsGrid .simple-settings-card textarea,
+.vector-ui .settingsGrid .simple-settings-card select {
   min-height: 112px;
   resize: vertical;
   border: 1px solid var(--vector-line);
@@ -323,7 +324,13 @@ body.vector-ui {
   caret-color: var(--vector-yellow);
 }
 
-.vector-ui .settingsGrid .simple-settings-card textarea:focus {
+.vector-ui .settingsGrid .simple-settings-card select {
+  min-height: 46px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.vector-ui .settingsGrid .simple-settings-card textarea:focus,
+.vector-ui .settingsGrid .simple-settings-card select:focus {
   border-color: var(--vector-yellow);
   box-shadow: 0 0 0 3px var(--vector-yellow-soft);
 }
