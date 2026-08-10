@@ -135,6 +135,26 @@ class ContextAndPlanningTests(unittest.TestCase):
             remigrated = Database(path).settings()
             self.assertEqual(remigrated["ai_max_tokens"], "1000")
 
+    def test_legacy_openrouter_model_and_health_are_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "radio.db"
+            Database(path)
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute(
+                    "UPDATE settings SET value=? WHERE key='secondary_model'",
+                    ("deepseek/deepseek-v4-flash",),
+                )
+                connection.execute(
+                    "UPDATE settings SET value=? WHERE key='provider_health'",
+                    ('{"old-provider":{"state":"disabled"}}',),
+                )
+                connection.execute("PRAGMA user_version=18")
+
+            migrated = Database(path).settings()
+
+            self.assertEqual(migrated["secondary_model"], "openrouter/free")
+            self.assertEqual(migrated["provider_health"], "{}")
+
     def test_legacy_builtin_host_name_is_migrated_to_adam_vector(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "radio.db"

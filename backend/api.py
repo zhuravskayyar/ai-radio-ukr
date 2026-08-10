@@ -1703,9 +1703,9 @@ class RadioAPI:
                 "model": settings.get("nvidia_model") or DEFAULTS["nvidia_model"],
                 # Hosted NIM can spend significant time warming/queuing a large
                 # model and completing the full 20-track JSON plan. All
-                # credentials run in parallel, so a 90-second per-key
+                # credentials run in parallel, so a 200-second per-key
                 # limit improves reliability without multiplying total wait.
-                "timeout_seconds": 90,
+                "timeout_seconds": 200,
             })
 
         secondary_provider = None
@@ -2006,6 +2006,7 @@ class RadioAPI:
                 "secondary_api_key": found["OpenRouter"][0],
                 "secondary_api_enabled": "1",
                 "secondary_api_url": "https://openrouter.ai/api/v1/chat/completions",
+                "secondary_model": DEFAULTS["secondary_model"],
             })
         if found["YouTube"]:
             values["youtube_api_key"] = found["YouTube"][0]

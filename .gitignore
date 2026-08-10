@@ -22,6 +22,7 @@ packaging/python-restore/
 packaging/python-3.11.9-amd64.exe
 api.txt
 apitest.txt
+working_api_keys.txt
 radio.db
 *.log
 links.txt

@@ -37,6 +37,7 @@ class SecondaryApiTests(unittest.TestCase):
             self.assertEqual(stored["nvidia_api_key"], nvidia)
             self.assertEqual(json.loads(stored["nvidia_api_keys"]), [nvidia])
             self.assertEqual(stored["secondary_api_key"], openrouter)
+            self.assertEqual(stored["secondary_model"], "openrouter/free")
             self.assertEqual(stored["youtube_api_key"], youtube)
             self.assertEqual(stored["secondary_api_enabled"], "1")
             self.assertEqual(result["settings"]["nvidia_api_key"], "")
@@ -66,7 +67,7 @@ class SecondaryApiTests(unittest.TestCase):
                 ["nvidia", "nvidia-2", "nvidia-3", "nvidia-4", "nvidia-5"],
             )
             self.assertTrue(all(
-                provider["timeout_seconds"] == 90 for provider in providers
+                provider["timeout_seconds"] == 200 for provider in providers
             ))
             self.assertEqual(result["settings"]["nvidia_key_count"], 5)
             self.assertEqual(result["settings"]["nvidia_api_key"], "")
@@ -269,7 +270,7 @@ api_key="nvapi-extra-three")''',
             )
             self.assertEqual(len(track_providers), 5)
             self.assertEqual(len(intro_providers), 2)
-            self.assertIn("deepseek", intro_providers[0]["model"].casefold())
+            self.assertEqual(intro_providers[0]["model"], "openrouter/free")
 
     def test_secondary_provider_autodetects_openrouter_key_from_api_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -290,7 +291,7 @@ api_key="nvapi-extra-three")''',
                 provider["name"] == "secondary"
                 and provider["url"] == "https://openrouter.ai/api/v1/chat/completions"
                 and provider["key"] == "sk-or-test-key"
-                and provider["model"] == "deepseek/deepseek-v4-flash"
+                and provider["model"] == "openrouter/free"
                 for provider in providers
             ))
 

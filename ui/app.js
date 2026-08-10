@@ -294,13 +294,13 @@ function ensureCharacterSettings() {
         <label>AI для DJ-пошуку
           <select data-setting="dj_ai_provider">
             <option value="parallel">Паралельно, кращий план</option>
-            <option value="secondary">OpenRouter / DeepSeek</option>
+            <option value="secondary">OpenRouter / Free Router</option>
             <option value="nvidia">NVIDIA Nemotron</option>
           </select>
         </label>
         <label>AI для ведучого / Play Together
           <select data-setting="host_ai_provider">
-            <option value="secondary">OpenRouter / DeepSeek</option>
+            <option value="secondary">OpenRouter / Free Router</option>
             <option value="nvidia">NVIDIA Nemotron</option>
             <option value="parallel">Паралельно всі</option>
           </select>
@@ -326,7 +326,7 @@ function ensureCharacterSettings() {
         </label>
         <label>OpenRouter / OpenAI-сумісний URL<input data-setting="secondary_api_url" placeholder="https://openrouter.ai/api/v1/chat/completions"></label>
         <label>API key<input type="password" data-setting="secondary_api_key" placeholder="sk-or-..."></label>
-        <label>Модель<input data-setting="secondary_model" placeholder="deepseek/deepseek-v4-flash"></label>
+        <label>Модель<input data-setting="secondary_model" placeholder="openrouter/free"></label>
         <p id="secondaryStatus" class="hint">Другий API вимкнений</p>
         <button id="benchmarkProviders" type="button">Тест AI-провайдерів</button>
         <p id="providerBenchmarkResult" class="hint">Тест перевіряє DJ-пошук, підводку й правопис без завантаження аудіо.</p>

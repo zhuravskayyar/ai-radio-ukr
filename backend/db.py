@@ -100,7 +100,7 @@ DEFAULTS = {
     "secondary_api_enabled": "0",
     "secondary_api_url": "https://openrouter.ai/api/v1/chat/completions",
     "secondary_api_key": "",
-    "secondary_model": "deepseek/deepseek-v4-flash",
+    "secondary_model": "openrouter/free",
     # JSON with non-secret circuit-breaker state for temporarily unavailable
     # AI providers. Credentials are identified only by a short SHA-256 digest.
     "provider_health": "{}",
@@ -618,6 +618,20 @@ class Database:
                     "WHERE key IN ('dynamic_discovery_enabled','licensed_sources_confirmed')"
                 )
                 db.execute("PRAGMA user_version=18")
+            if schema_version < 19:
+                # The tested OpenRouter keys can use the free router, while
+                # the previous DeepSeek default requires unavailable credits.
+                db.execute(
+                    "UPDATE settings SET value=? "
+                    "WHERE key='secondary_model' "
+                    "AND value IN ('deepseek/deepseek-v4-flash',"
+                    "'deepseek/deepseek-v4-flash-latest')",
+                    (DEFAULTS["secondary_model"],),
+                )
+                db.execute(
+                    "UPDATE settings SET value='{}' WHERE key='provider_health'"
+                )
+                db.execute("PRAGMA user_version=19")
             db.execute(
                 "UPDATE settings SET value=? "
                 "WHERE key='ai_max_tokens' AND value IN ('160','220','320','360')",
