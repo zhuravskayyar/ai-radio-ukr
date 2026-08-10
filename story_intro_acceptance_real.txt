@@ -1,0 +1,106 @@
+LUMEN Radio - local music-story batch acceptance
+Режим: LIVE AI
+Фільтр провайдера: nvidia
+Запитано підводок: 10
+Доступних верифікованих карток: 5
+РЕЗУЛЬТАТ: PASS - 10/10
+
+01. PASS | card #42 | повтор: 1
+Поточний: The Offspring - The Kids Aren't Alright
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 51
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: The 'Americana' Dream — Los Angeles Times | https://www.latimes.com/archives/la-xpm-1998-nov-17-ca-43522-story.html
+Текст: Ця пісня почалася не з вигадки, а з поїздки старим районом. Декстер Голланд повернувся до Ґарден-Ґроув, де виріс разом із майбутніми учасниками Зе Офспрінг. Реальні історії смерті, невдач, виснаження й нездійснених планів його знайомих стали темним боком американського передмістя в тексті пісні. На цьому нерві починається Трі Дейз Ґрейс, Х'юмен Рейс.
+
+02. PASS | card #43 | повтор: 1
+Поточний: Creedence Clearwater Revival - Have You Ever Seen The Rain
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 50
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: John Fogerty on the song that foretold the breakup of CCR — Guitar Player | https://www.guitarplayer.com/music/albums-singles/john-fogerty-on-the-song-that-foretold-the-breakup-of-ccr
+Текст: Дощ у цій пісні був не стільки про погоду, скільки про сам гурт. Джон Фоґерті пояснював, що написав її про розпад Кріденс Клірвотер Рівайвал. Гурт був на вершині успіху, але всередині учасники вже були нещасні, звідси образ дощу посеред ясного дня. Цю музичну лінію продовжує Трі Дейз Ґрейс, Х'юмен Рейс.
+
+03. PASS | card #44 | повтор: 1
+Поточний: Kiss - I Was Made For Lovin' You
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 42
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: The Starchild talks us through key songs — Paul Stanley | https://www.paulstanley.com/2015/05/the-starchild-talks-us-through-some-of-the-key-songs-in-his-glittering-career/
+Текст: Один із найбільших хітів Кіс почався з ритму, який Пол Стенлі почув у студіо п'ятдесят чотири. Стенлі помітив, що танцювальні композиції тримають приблизно сто двадцять шість ударів за хвилину й говорять про теперішній момент. Тепер простір забирає Трі Дейз Ґрейс, Х'юмен Рейс.
+
+04. PASS | card #45 | повтор: 1
+Поточний: Bon Jovi - Runaway
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 41
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: Runaway — Backstage with Bon Jovi | https://backstage.bonjovi.com/studio/collections/runaway
+Текст: Ця пісня стала радіохітом ще до появи звичного складу Бон Джові. Ранавей потрапила до збірки місцевих нью-йоркських виконавців нев іорк рокс, яку у тисяча дев'ятсот вісімдесят третьому випустила станція дабл-ю-ей-пі-пі. Після цієї деталі мікрофон переходить до Трі Дейз Ґрейс, Х'юмен Рейс.
+
+05. PASS | card #1 | повтор: 1
+Поточний: Black Sabbath - Paranoid (2009 Remaster)
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 49
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: Geezer Butler interview — Louder | https://www.loudersound.com/features/geezer-butler-interview
+Текст: Цю пісню могли взагалі не записати. Наприкінці роботи над альбомом Блек Саббат бракувало короткої композиції. Оззі Осборну й Гізеру Батлеру риф нагадав коммунікашн брікдаун гурту лед зеппелін, тому спочатку вони не хотіли його грати. Тоні Айоммі на місці придумав основний риф. Наступний поворот ефіру, Трі Дейз Ґрейс, Х'юмен Рейс.
+
+06. PASS | card #42 | повтор: 2
+Поточний: The Offspring - The Kids Aren't Alright
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 51
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: The 'Americana' Dream — Los Angeles Times | https://www.latimes.com/archives/la-xpm-1998-nov-17-ca-43522-story.html
+Текст: Ця пісня почалася не з вигадки, а з поїздки старим районом. Декстер Голланд повернувся до Ґарден-Ґроув, де виріс разом із майбутніми учасниками Зе Офспрінг. Реальні історії смерті, невдач, виснаження й нездійснених планів його знайомих стали темним боком американського передмістя в тексті пісні. Цю музичну лінію продовжує Трі Дейз Ґрейс, Х'юмен Рейс.
+
+07. PASS | card #43 | повтор: 2
+Поточний: Creedence Clearwater Revival - Have You Ever Seen The Rain
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 49
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: John Fogerty on the song that foretold the breakup of CCR — Guitar Player | https://www.guitarplayer.com/music/albums-singles/john-fogerty-on-the-song-that-foretold-the-breakup-of-ccr
+Текст: Джон Фоґерті пояснював, що написав її про розпад Кріденс Клірвотер Рівайвал. Гурт був на вершині успіху, але всередині учасники вже були нещасні, звідси образ дощу посеред ясного дня. Дощ у цій пісні був не стільки про погоду, скільки про сам гурт. Тепер простір забирає Трі Дейз Ґрейс, Х'юмен Рейс.
+
+08. PASS | card #44 | повтор: 2
+Поточний: Kiss - I Was Made For Lovin' You
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 44
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: The Starchild talks us through key songs — Paul Stanley | https://www.paulstanley.com/2015/05/the-starchild-talks-us-through-some-of-the-key-songs-in-his-glittering-career/
+Текст: Один із найбільших хітів Кіс почався з ритму, який Пол Стенлі почув у студіо п'ятдесят чотири. Він повернувся додому, виставив драм-машину на цей темп і почав писати Ай Воз Мейд Фор Лавін Ю. Після цієї деталі мікрофон переходить до Трі Дейз Ґрейс, Х'юмен Рейс.
+
+09. PASS | card #45 | повтор: 2
+Поточний: Bon Jovi - Runaway
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 38
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: Runaway — Backstage with Bon Jovi | https://backstage.bonjovi.com/studio/collections/runaway
+Текст: Ця пісня стала радіохітом ще до появи звичного складу Бон Джові. Ранавей потрапила до збірки місцевих нью-йоркських виконавців нев іорк рокс, яку у тисяча дев'ятсот вісімдесят третьому випустила станція дабл-ю-ей-пі-пі. Наступний поворот ефіру, Трі Дейз Ґрейс, Х'юмен Рейс.
+
+10. PASS | card #1 | повтор: 2
+Поточний: Black Sabbath - Paranoid (2009 Remaster)
+Наступний: Three Days Grace - Human Race
+TTS: 22.0 с | слів: 51
+Генератор: nvidia | fallback: ні
+Фактичний режим: source-locked
+Quality: facts=10/10, emotion=9/10, radio=10/10, tts=10/10, transition=10/10, final=9.8/10
+Джерело: Geezer Butler interview — Louder | https://www.loudersound.com/features/geezer-butler-interview
+Текст: Цю пісню могли взагалі не записати. Тоні Айоммі на місці придумав основний риф. Оззі Осборну й Гізеру Батлеру риф нагадав коммунікашн брікдаун гурту лед зеппелін, тому спочатку вони не хотіли його грати. У підсумку Параноїд стала однією з найвідоміших композицій Блек Саббат. На цьому нерві починається Трі Дейз Ґрейс, Х'юмен Рейс.

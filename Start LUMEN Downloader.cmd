@@ -1,0 +1,10 @@
+@echo off
+cd /d "%~dp0"
+
+if not exist ".venv\Scripts\pythonw.exe" (
+    echo Virtual environment not found: .venv\Scripts\pythonw.exe
+    pause
+    exit /b 1
+)
+
+start "" ".venv\Scripts\pythonw.exe" "Qwen_python_20260804_4sskbslqs.py" --gui

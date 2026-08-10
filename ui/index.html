@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Radio</title><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"></head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">L</div>
+      <div class="brand-text">LUMEN<span>AI RADIO</span></div>
+    </div>
+    <div class="top-actions">
+      <button class="livebtn"><span></span> LIVE</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="menu">
+      <button class="nav active" data-page="onair"><i>◉</i> ON AIR</button>
+      <button class="nav" data-page="library"><i>♫</i> LIBRARY</button>
+      <button class="nav" data-page="settings"><i>⚙</i> SETTINGS</button>
+      <div class="mini-status">
+        <div class="status-pill live"><span></span> STREAM ONLINE</div>
+        <div class="status-pill">96 kbps</div>
+        <div class="status-pill">44.1 kHz</div>
+        <div class="status-pill">AI VOICE ACTIVE</div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="onair" class="page active">
+        <div class="hero">
+          <div class="hero-main">
+            <div class="eyebrow">NOW PLAYING</div>
+            <div class="play-info">
+              <div class="label">Зараз в ефірі</div>
+              <div class="track" id="nowTitle">Оберіть трек</div>
+              <div class="meta" id="nowArtist">Ваша бібліотека готова</div>
+            </div>
+            <div class="player-panel">
+              <div class="progress" id="progress"><i></i></div>
+              <div class="player-controls">
+                <button class="round" id="prev">‹</button>
+                <button class="round play" id="play">▶</button>
+                <button class="round" id="next">›</button>
+              </div>
+              <div class="player-meta">
+                <div class="times"><span id="elapsed">0:00</span><span>LIVE</span></div>
+                <label class="volume-label">VOL <input id="volume" type="range" min="0" max="100" value="75"></label>
+              </div>
+            </div>
+            <p class="sub">Професійний радіопродукт з AI ведучим, чергою треків і живим потоком.</p>
+          </div>
+          <div class="hero-side">
+            <div class="record"><span class="record-tag" id="coverRank">LIVE</span></div>
+            <div class="ai-panel">
+              <div class="ai-panel-head">AI DJ STATUS</div>
+              <ul>
+                <li>● Voice ready</li>
+                <li>● Queue prepared <span id="statusQueueCount">0</span> tracks</li>
+                <li>● Story generated</li>
+                <li>● Weather connected</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="studio-grid">
+          <section class="panel upcoming">
+            <h3>Наступні треки</h3>
+            <div class="minilist" id="queue"></div>
+          </section>
+
+          <section class="panel host-panel">
+            <h3>AI Host</h3>
+            <div class="script" id="intro">«Тут зʼявиться коротка підводка до наступного треку.»</div>
+            <div class="quick">
+              <button id="generate">✦ Нова підводка</button>
+              <button id="shuffle">→ Skip segment</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="library" class="page">
+        <div class="pageHeader">
+          <div>
+            <small>AI-БІБЛІОТЕКА</small>
+            <h2>Бібліотека <sup id="libraryCount">0</sup></h2>
+            <p id="aiLibraryStatus" class="libraryStatus">AI добирає відомі треки за стилем станції</p>
+          </div>
+          <button id="refreshAiLibrary" class="primary">↻ Оновити AI-бібліотеку</button>
+        </div>
+        <div class="table">
+          <div class="tr th"><span>#</span><span>ТРЕК</span><span>ДЖЕРЕЛО</span><span>ТАЙМІНГ</span><span>STORY</span><span>ВИМОВА</span><span></span></div>
+          <div id="trackTable"></div>
+          <div class="loadMore"><button id="loadMore">Показати ще</button></div>
+        </div>
+      </section>
+
+      <section id="settings" class="page">
+        <div class="pageHeader">
+          <div>
+            <small>КОНФІГУРАЦІЯ</small>
+            <h2>Налаштування</h2>
+          </div>
+          <div class="settingsSaveBox">
+            <pre id="settingsLog" class="hint"></pre>
+            <button id="saveSettings" class="primary">Зберегти</button>
+          </div>
+        </div>
+        <div class="settingsGrid">
+          <article>
+            <h3>Радіостанція</h3>
+            <label>Назва<input data-setting="station_name"></label>
+            <label>Імʼя ведучого<input data-setting="host_name"></label>
+            <label>Ротація<select data-setting="rotation"><option value="random">По настрою без повторів</option><option value="weighted">Розумний настрій</option></select></label>
+            <label>Ведучий говорить<select data-setting="host_every"><option value="1">Перед кожною піснею</option><option value="3">Кожні 3 треки</option><option value="5">Кожні 5 треків</option></select></label>
+          </article>
+          <article>
+            <h3>NVIDIA NIM</h3>
+            <label>NVIDIA API key<input type="password" data-setting="nvidia_api_key" placeholder="Автоматично з api.txt"></label>
+            <label>Модель<input data-setting="nvidia_model"></label>
+            <label>YouTube Data API key<input type="password" data-setting="youtube_api_key" placeholder="Автоматично з api.txt"></label>
+            <p id="nvidiaStatus" class="hint">Перевіряю NVIDIA API key…</p>
+            <p id="youtubeStatus" class="hint">Перевіряю YouTube API key…</p>
+            <p class="hint">Hosted Qwen завершив роботу 27.07.2026, тому використовується доступний NVIDIA Nemotron. Якщо API недоступний, ефір озвучує коротку локальну резервну підводку.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div><script src="app.js?v=auto"></script>
+</body></html>

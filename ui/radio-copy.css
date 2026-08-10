@@ -1,0 +1,15 @@
+.tr {
+  grid-template-columns: 52px minmax(220px, 1fr) 112px 100px 100px 105px 82px;
+}
+
+@media (max-width: 900px) {
+  .tr {
+    grid-template-columns: 40px 1fr 90px 80px;
+  }
+
+  .tr > :nth-child(4),
+  .tr > :nth-child(5),
+  .tr > :nth-child(6) {
+    display: none;
+  }
+}

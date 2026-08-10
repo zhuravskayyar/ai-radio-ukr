@@ -1,0 +1,434 @@
+===== File: backend/api.py =====
+
+-- make_intro and related host generation logic (excerpt) --
+
+def make_intro(
+		self,
+		track_id,
+		current_track_id=None,
+		verified_fact="",
+		style="",
+		generation_context=None,
+		content_plan=None,
+		duration_seconds=None,
+		variant="full",
+		store_track=True,
+	):
+	"""Generate host copy for a given track.
+
+	Key behaviour:
+	- builds contextual prompt (SYSTEM + USER) for the LLM when available
+	- enforces MUSIC STORY MODE when content_plan.content_type == 'story'
+	- falls back to `contextual_fallback_copy` if no LLM or quality gate fails
+	- normalizes and directs output via `VoiceDirector`
+	- stores `intro`, `intro_speech`, `intro_style` into DB when `store_track`
+	"""
+	tracks = self.db.tracks()
+	track = next((x for x in tracks if x["id"] == int(track_id)), None)
+	if not track:
+		return {"ok": False, "error": "Трек не знайдено"}
+	current = next((x for x in tracks if current_track_id and x["id"] == int(current_track_id)), None)
+	settings = self.db.settings()
+	context = generation_context or self.context_engine.snapshot(current, track)
+	plan = content_plan or {}
+	verified_fact = plan.get("verified_fact") or verified_fact
+	requested_style = plan.get("style") or style
+	duration_seconds = float(
+		duration_seconds or plan.get("target_seconds") or settings.get("host_length", 15)
+	)
+	voice_profile = self.voice_director.profile(context, track, duration_seconds)
+	short_variant = variant == "short"
+	story_mode = plan.get("content_type") == "story"
+	# choose sentence targets and allowed sentences based on story_mode/variant
+	style = self._choose_intro_style(current, verified_fact, style)
+	if requested_style in INTRO_STYLES:
+		style = requested_style
+		self._last_intro_style = style
+	generated = contextual_fallback_copy(
+		track, current, style, context, plan, short_variant
+	)
+	generated_from_ai = False
+	key = self._nvidia_key(settings)
+	provider_error = ""
+	if key:
+		# prepare system prompt and user request (detailed, includes STORY rules)
+		# call NVIDIA/LLM and validate candidate (count [[NEXT_TRACK]], sentence count,
+		# banned phrases, word count, etc.)
+		# if valid, accept generated; otherwise provider_error set and fallback used
+		pass
+	display_text = _replace_track_markers(generated, track, current)
+	if generated_from_ai:
+		accepted, gate_error = self.content_planner.quality_gate(
+			display_text, track, context, verified_fact,
+			plan.get("story_data", []),
+		)
+		if not accepted:
+			provider_error = f"Quality gate: {gate_error}"
+			generated = contextual_fallback_copy(
+				track, current, style, context, plan, short_variant
+			)
+			display_text = _replace_track_markers(generated, track, current)
+	directed = self.voice_director.direct(
+		display_text, tracks, context, track, duration_seconds
+	)
+	speech_text = directed["tts_text"]
+	if store_track:
+		self.db.update_track(
+			track["id"],
+			intro=display_text,
+			intro_speech=speech_text,
+			intro_style=style,
+		)
+	fallback = not bool(key) or bool(provider_error)
+	return {
+		"ok": True,
+		"intro": display_text,
+		"display_text": display_text,
+		"linguistic_text": directed["linguistic_text"],
+		"speech_text": speech_text,
+		"voice_profile": directed["profile"],
+		"needs_pronunciation_review": directed["needs_pronunciation_review"],
+		"style": style,
+		"fallback": fallback,
+		"provider": "template" if fallback else "nvidia",
+		"provider_error": provider_error,
+	}
+
+
+===== File: backend/content_planner.py =====
+
+-- ContentPlanner (core parts) --
+
+class ContentPlanner:
+	"""Chooses what the host says before any language model is called."""
+
+	def __init__(self, db, random_source=None):
+		self.db = db
+		self.random = random_source or random.Random()
+		self.knowledge_base = MusicKnowledgeBase(db)
+
+	def plan(self, context, sequence_offset=0):
+		"""Return a ContentPlan describing what should be said next.
+
+		Decision hierarchy (simplified):
+		1. top_of_hour/weather/clock slots
+		2. story if available and probability allows (with alternation check)
+		3. fact if available
+		4. liner/clean_segue based on talk probability and host_every
+		5. talk default
+		"""
+		settings = self.db.settings()
+		time = context["time"]
+		next_track = context.get("next_track", {})
+		# compute target_seconds based on vocal_start_ms, bpm, daypart
+		# story selection uses self.knowledge_base.select(next_track_id)
+		# prevents immediate reuse via story_every setting
+		# returns a ContentPlan dataclass instance
+
+	def quality_gate(self, display_text, next_track, context, verified_fact="", verified_story_data=None):
+		"""Reject copy that is low-quality or repeats recent openings."""
+		lowered = (display_text or "").casefold()
+		if any(cliche in lowered for cliche in FORBIDDEN_CLICHES):
+			return False, "заборонений радіоштамп"
+		if not next_track.get("artist") or next_track["artist"].casefold() not in lowered:
+			return False, "немає точного виконавця"
+		if not next_track.get("title") or next_track["title"].casefold() not in lowered:
+			return False, "немає точної назви"
+		# checks recent history similarities to prevent near-duplicates
+		return True, ""
+
+	def mark_aired(self, transition, aired_at=None):
+		"""Remember which facts/stories were aired and set cooldowns."""
+		aired = _parse(aired_at) or datetime.now(timezone.utc)
+		try:
+			context = json.loads(transition.get("context_json") or "{}")
+			plan = json.loads(transition.get("plan_json") or "{}")
+		except json.JSONDecodeError:
+			return
+		for key in plan.get("memory_keys", []):
+			cooldown = timedelta(hours=1)
+			if key == "weather":
+				cooldown = timedelta(minutes=45)
+			elif key == "weather_change":
+				cooldown = timedelta(hours=2)
+			elif key.startswith("fact:"):
+				cooldown = timedelta(days=1)
+			value = {"hour_key": context.get("time", {}).get("clock_hour_key", "")} if key == "last_time_check" else {"aired": True}
+			self.db.remember(
+				key,
+				json.dumps(value, ensure_ascii=False),
+				aired.isoformat(),
+				(aired + cooldown).isoformat(),
+			)
+
+
+===== File: backend/voice_director.py =====
+
+-- VoiceDirector (full file) --
+
+from .speech_normalizer import normalize_for_speech, normalize_linguistic
+
+
+class VoiceDirector:
+	"""Turns final copy into linguistic and TTS layers with a stable voice profile."""
+
+	def __init__(self, default_voice="uk-UA-OstapNeural"):
+		self.default_voice = default_voice
+
+	def profile(self, context, next_track, target_seconds):
+		daypart = context.get("time", {}).get("daypart", "day")
+		energy = float((next_track or {}).get("energy") or 5)
+		rate = {"morning": 2, "day": 0, "drive": 3, "evening": -2, "night": -5}.get(daypart, 0)
+		if energy >= 8:
+			rate += 2
+		elif energy <= 3:
+			rate -= 2
+		rate = max(-7, min(5, rate))
+		personality = context.get("personality", {})
+		seconds = max(2.5, min(40.0, float(target_seconds or 10)))
+		target = seconds * (2.45 + rate / 100)
+		return VoiceProfile(
+			voice=self.default_voice,
+			rate=f"{rate:+d}%",
+			pitch="-2Hz",
+			language_style=personality.get("language_style", "casual_uk"),
+			colloquiality=float(personality.get("colloquiality", 0.30)),
+			surzhyk=min(0.08, float(personality.get("surzhyk", 0.08))),
+			slang=float(personality.get("slang", 0.15)),
+			target_seconds=seconds,
+			target_words_min=max(5, round(target * 0.85)),
+			target_words_max=max(7, round(target * 1.10)),
+		)
+
+	def prompt_directive(self, profile):
+		styles = {
+			"standard": "літературна природна українська без розмовних вставок",
+			"casual_uk": "жива розмовна українська без граматичних помилок",
+			"local_uk": "локальна розмовна українська; суржик лише зрідка й без карикатури",
+		}
+		return (
+			f"VOICE_STYLE: {styles.get(profile.language_style, styles['casual_uk'])}. "
+			f"COLLOQUIALITY={profile.colloquiality:.2f}; "
+			f"SURZHYK не більше {profile.surzhyk:.2f}; SLANG={profile.slang:.2f}. "
+			f"Ціль: {profile.target_words_min}–{profile.target_words_max} слів і "
+			f"приблизно {profile.target_seconds:.1f} секунди. Не вставляй «ну» чи "
+			"«коротше» автоматично: людська недосконалість має бути рідкісною."
+		)
+
+	def _punctuation_director(self, text):
+		sentences = []
+		for sentence in re.split(r"(?<=[.!?])\s+", text):
+			words = sentence.split()
+			if len(words) > 24 and ", " in sentence:
+				left, right = sentence.split(", ", 1)
+				if len(left.split()) >= 7 and len(right.split()) >= 5:
+					sentence = left.rstrip(" ,") + ". " + right[:1].upper() + right[1:]
+			sentences.append(sentence)
+		directed = " ".join(sentences)
+		directed = re.sub(r"\s*;\s*", ". ", directed)
+		directed = re.sub(r"\.{2,}", ".", directed)
+		return re.sub(r"\s+", " ", directed).strip()
+
+	def direct(self, qwen_text, tracks, context, next_track, target_seconds):
+		profile = self.profile(context, next_track, target_seconds)
+		linguistic = normalize_linguistic(qwen_text)
+		tts_text = normalize_for_speech(linguistic, tracks)
+		tts_text = self._punctuation_director(tts_text)
+		return {
+			"qwen_text": qwen_text,
+			"linguistic_text": linguistic,
+			"tts_text": tts_text,
+			"profile": profile.to_dict(),
+			"needs_pronunciation_review": bool((next_track or {}).get("pronunciation_review")),
+		}
+
+
+===== File: backend/speech_normalizer.py =====
+
+-- normalize_for_speech and title cleaning --
+
+def normalize_for_speech(text: str, tracks=()) -> str:
+	"""Build a stable Edge/Piper-friendly copy without changing display text."""
+	speech = normalize_linguistic(text)
+	mappings = {
+		original.casefold(): (original, spoken)
+		for original, spoken in (
+			list(PRONUNCIATIONS.items()) + list(TITLE_PRONUNCIATIONS.items())
+		)
+	}
+	for track in tracks or ():
+		artist = str(track.get("artist", "")).strip()
+		title = str(track.get("title", "")).strip()
+		artist_speech = str(track.get("artist_speech", "")).strip()
+		title_speech = str(track.get("title_speech", "")).strip()
+		# If the title contains noisy suffixes (official video, HD, lyrics, etc.)
+		# prepare a cleaned short title to use only for speech replacement.
+		clean_title = _clean_track_title(title)
+		if artist_speech:
+			mappings[artist.casefold()] = (artist, artist_speech)
+		if title_speech:
+			mappings[title.casefold()] = (title, title_speech)
+		# If cleaned title differs, prefer mapping noisy full title -> cleaned spoken
+		if clean_title and clean_title != title:
+			spoken_for_title = title_speech or clean_title
+			mappings[title.casefold()] = (title, spoken_for_title)
+	for original, spoken in sorted(
+		mappings.values(), key=lambda item: len(item[0]), reverse=True
+	):
+		speech = _replace_case_insensitive(speech, original, spoken)
+	speech = speech.replace("&", " і ")
+	speech = speech.translate(str.maketrans({"«": "", "»": "", "“": "", "”": "", '"': ""}))
+	speech = re.sub(r"\s*[—–]\s*", ", ", speech)
+	speech = re.sub(r"\s*:\s*", ", ", speech)
+	speech = "".join(
+		char for char in unicodedata.normalize("NFD", speech)
+		if char != "\u0301"
+	)
+	speech = unicodedata.normalize("NFC", speech)
+	speech = re.sub(r"\s+([,.;!?])", r"\1", speech)
+	speech = re.sub(r",(?:\s*,)+", ",", speech)
+	speech = re.sub(r"\s+", " ", speech).strip()
+	return speech
+
+def _clean_track_title(title: str) -> str:
+	"""Return a shorter, speech-friendly title by removing common noisy suffixes.
+
+	Examples removed: (Official Video), [Official Audio], - Official Video, HD, Remastered, Lyrics, 2020 Remaster
+	This is conservative: it only strips obvious non-title metadata and bracketed extras.
+	"""
+	if not title:
+		return title
+	t = title
+	t = re.sub(r"\s*[\(\[][^^\)\]]{1,120}[\)\]]\s*$", "", t).strip()
+	t = re.sub(r"\s*[–—-]\s*(?:official|official video|official audio|audio|video|hd|hd video|lyrics|remaster|remastered|version|live|promo|clip)\b.*$", "", t, flags=re.IGNORECASE)
+	t = re.sub(r"\b(?:official video|official audio|official|video|audio|lyrics|remaster|remastered|hd|live|clip)\b\s*$", "", t, flags=re.IGNORECASE)
+	t = re.sub(r"[\s:,-]+$", "", t).strip()
+	return t
+
+
+===== File: backend/music_knowledge.py =====
+
+-- MusicKnowledgeBase (selection and payload) --
+
+class MusicKnowledgeBase:
+	"""Stores and selects source-backed story cards; it never researches live."""
+
+	def __init__(self, db):
+		self.db = db
+
+	def cards_for_track(self, track_id, verified_only=True):
+		return [
+			self.payload(row)
+			for row in self.db.stories_for_track(int(track_id), verified_only)
+		]
+
+	def select(self, track_id):
+		cards = self.cards_for_track(track_id, verified_only=True)
+		if not cards:
+			return None
+		# remove tease_next if there is no next episode
+		episodes = {(card.get("series_key"), int(card.get("episode") or 0)) for card in cards}
+		for card in cards:
+			if card.get("tease_next") and (card.get("series_key"), int(card.get("episode") or 0) + 1) not in episodes:
+				card["tease_next"] = ""
+		# follow series continuation if present in host memory
+		for card in cards:
+			series_key = card.get("series_key")
+			if not series_key or not card.get("episode"):
+				continue
+			memory = self.db.memory(f"story_series:{series_key}")
+			if not memory:
+				continue
+			try:
+				previous = json.loads(memory.get("value_json") or "{}")
+			except (TypeError, json.JSONDecodeError):
+				previous = {}
+			if int(card["episode"]) == int(previous.get("episode") or 0) + 1:
+				card["callback"] = previous.get("tease_next") or ""
+				return card
+		# prefer fresh cards (use_count == 0) to avoid immediate repeats
+		fresh_cards = [card for card in cards if int(card.get("use_count") or 0) == 0]
+		if fresh_cards:
+			return fresh_cards[0]
+		return None
+
+	def mark_used(self, story_id, used_at=None):
+		used = used_at or datetime.now(timezone.utc).isoformat()
+		self.db.mark_story_used(int(story_id), used)
+
+	@staticmethod
+	def payload(row):
+		if not row:
+			return None
+		try:
+			story_data = json.loads(row.get("story_data_json") or "[]")
+		except (TypeError, json.JSONDecodeError):
+			story_data = []
+		return {
+			**row,
+			"story_data": story_data if isinstance(story_data, list) else [],
+			"target_seconds": DURATION_SECONDS.get(row.get("duration_class"), 20.0),
+		}
+
+
+===== File: backend/db.py =====
+
+-- DB schema snippets relevant to host logic --
+
+CREATE TABLE IF NOT EXISTS transitions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	current_track_id INTEGER NOT NULL,
+	next_track_id INTEGER NOT NULL,
+	status TEXT NOT NULL DEFAULT 'preparing',
+	transition_type TEXT NOT NULL DEFAULT 'clean_segue',
+	content_type TEXT NOT NULL DEFAULT 'none',
+	style TEXT DEFAULT '',
+	context_json TEXT DEFAULT '{}',
+	plan_json TEXT DEFAULT '{}',
+	display_short TEXT DEFAULT '',
+	linguistic_short TEXT DEFAULT '',
+	speech_short TEXT DEFAULT '',
+	audio_short_path TEXT DEFAULT '',
+	duration_short_ms INTEGER DEFAULT 0,
+	display_full TEXT DEFAULT '',
+	linguistic_full TEXT DEFAULT '',
+	speech_full TEXT DEFAULT '',
+	audio_full_path TEXT DEFAULT '',
+	duration_full_ms INTEGER DEFAULT 0,
+	voice_rate TEXT DEFAULT '+0%',
+	provider TEXT DEFAULT '',
+	provider_error TEXT DEFAULT '',
+	scheduled_for TEXT,
+	prepared_at TEXT,
+	expires_at TEXT,
+	UNIQUE(current_track_id, next_track_id)
+);
+
+===== File: data/music-stories.json =====
+
+[
+	{
+		"artist": "Black Sabbath",
+		"title": "Paranoid (2009 Remaster)",
+		"stories": [
+			{
+				"category": "SONG_ORIGIN",
+				"hook": "Цю пісню могли взагалі не записати",
+				"story_data": [
+					"Наприкінці роботи над альбомом Black Sabbath бракувало короткої композиції",
+					"Тоні Айоммі на місці придумав основний риф",
+					"Оззі Осборну й Гізеру Батлеру риф нагадав Communication Breakdown гурту Led Zeppelin, тому спочатку вони не хотіли його грати",
+					"У підсумку Paranoid стала однією з найвідоміших композицій Black Sabbath"
+				],
+				"verified_quote": "",
+				"source_url": "https://www.loudersound.com/features/geezer-butler-interview",
+				"source_title": "Geezer Butler interview — Louder",
+				"confidence": "verified",
+				"duration_class": "normal",
+				"series_key": "black-sabbath-paranoid",
+				"episode": 1,
+				"tease_next": ""
+			}
+		]
+	}
+]

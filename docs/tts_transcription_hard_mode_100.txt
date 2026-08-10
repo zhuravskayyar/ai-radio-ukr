@@ -1,0 +1,128 @@
+ТЕСТ ТРАНСКРИПЦІЇ ДЛЯ AI-РАДІО — HARD MODE (100)
+
+Формат: оригінал => правильний запис для українського TTS.
+Кома позначає коротку природну паузу. Праворуч немає латинки, службових
+символів або російських літер.
+
+РІВЕНЬ 1 — СКЛАДНІ ІМЕНА АРТИСТІВ
+001. Hozier — Take Me To Church => Хозіер, Тейк Мі Ту Черч.
+002. SZA — Snooze => Ес-Зі-Ей, Снуз.
+003. Doja Cat — Paint The Town Red => Доджа Кет, Пейнт Зе Таун Ред.
+004. A$AP Rocky — Praise The Lord => Ей-Сі-Ей-Пі Роккі, Прейз Зе Лорд.
+005. The Kid LAROI — Stay => Зе Кід Ларой, Стей.
+006. Bebe Rexha — I'm Good => Бібі Рекса, Айм Гуд.
+007. RAYE — Escapism => Рей, Ескапізм.
+008. Tate McRae — greedy => Тейт Макрей, Гріді.
+009. Conan Gray — Heather => Конан Грей, Хезер.
+010. Benson Boone — Beautiful Things => Бенсон Бун, Б'ютифул Сінгз.
+
+РІВЕНЬ 2 — ЦИФРИ, СИМВОЛИ, АБРЕВІАТУРИ
+011. U2 — With Or Without You => Ю Ту, Віз Ор Візаут Ю.
+012. AC/DC — Thunderstruck => Ей-Сі Ді-Сі, Сандерстрак.
+013. 5 Seconds of Summer — Youngblood => Файв Секондс Оф Самер, Янгблад.
+014. blink-182 — All The Small Things => Блінк Сто Вісімдесят Два, Ол Зе Смол Сінгс.
+015. Maroon 5 — Memories => Марун Файв, Меморіз.
+016. LMFAO — Party Rock Anthem => Ел-Ем-Еф-Ей-Оу, Парті Рок Ентем.
+017. P!nk — Just Like A Pill => Пінк, Джаст Лайк Е Піл.
+018. will.i.am — Scream & Shout => Віл Ай Ем, Скрім Енд Шаут.
+019. 50 Cent — Candy Shop => Фіфті Сент, Кенді Шоп.
+020. 21 Savage — a lot => Твенті Уан Севідж, Е Лот.
+
+РІВЕНЬ 3 — ЄВРОПА ТА НЕАНГЛІЙСЬКІ ІМЕНА
+021. Måneskin — I Wanna Be Your Slave => Манескін, Ай Ванна Бі Йор Слейв.
+022. ROSALÍA — DESPECHÁ => Розалія, Деспеча.
+023. Stromae — Alors on danse => Стромай, Алор Он Данс.
+024. Aya Nakamura — Djadja => Айя Накамура, Джаджа.
+025. Rammstein — Sonne => Рамштайн, Зонне.
+026. ZAZ — Je veux => Заз, Же Вйо.
+027. Indila — Dernière danse => Інділа, Дерньєр Данс.
+028. GIMS — Est-ce que tu m'aimes? => Джімс, Ес Кьо Тю Мем.
+029. Måns Zelmerlöw — Heroes => Монс Зельмерльов, Хіроуз.
+030. La Casa Azul — La Revolución Sexual => Ла Каса Азуль, Ла Революсьйон Сексуаль.
+
+РІВЕНЬ 4 — КОРЕЯ ТА АЗІЯ
+031. BTS — Dynamite => Бі Ті Ес, Дайнемайт.
+032. BLACKPINK — Pink Venom => Блекпінк, Пінк Веном.
+033. NewJeans — Super Shy => Нью Джинс, Супер Шай.
+034. Stray Kids — S-Class => Стрей Кідс, Ес Клас.
+035. TWICE — The Feels => Твайс, Зе Філз.
+036. LE SSERAFIM — Perfect Night => Ле Серафім, Перфект Найт.
+037. PSY — Gangnam Style => Псай, Каннам Стайл.
+038. BLACKPINK & Selena Gomez — Ice Cream => Блекпінк і Селіна Гомез, Айс Крім.
+039. Jung Kook — Seven => Чонгук, Севен.
+040. (G)I-DLE — Queencard => Джі Айдл, Квінкард.
+
+РІВЕНЬ 5 — НЕБЕЗПЕЧНІ НАЗВИ ТРЕКІВ
+041. Billie Eilish — What Was I Made For? => Біллі Айліш, Вот Воз Ай Мейд Фор.
+042. The Weeknd — Blinding Lights => Зе Вікенд, Блайндінг Лайтс.
+043. Arctic Monkeys — Why'd You Only Call Me When You're High? => Арктік Манкіз, Вай Дід Ю Онлі Кол Мі Вен Йор Хай.
+044. Post Malone — I Had Some Help => Пост Мелоун, Ай Гед Сам Гелп.
+045. Olivia Rodrigo — drivers license => Олівія Родріго, Драйверс Лайсенс.
+046. Sia — Unstoppable => Сіа, Анстопебл.
+047. Adele — Easy On Me => Адель, Ізі Он Мі.
+048. Harry Styles — Sign of the Times => Гаррі Стайлз, Сайн Оф Зе Таймз.
+049. Lewis Capaldi — Someone You Loved => Льюїс Капальді, Самван Ю Лавд.
+050. Sam Smith — Unholy => Сем Сміт, Анхолі.
+
+РІВЕНЬ 6 — ДУЖЕ СКЛАДНІ НАЗВИ
+051. The xx — Intro => Зе Екс Екс, Інтро.
+052. M83 — Midnight City => Ем Вісімдесят Три, Міднайт Сіті.
+053. MGMT — Kids => Ем-Джі-Ем-Ті, Кідс.
+054. Tame Impala — The Less I Know The Better => Тейм Імпала, Зе Лес Ай Ноу Зе Беттер.
+055. Glass Animals — Heat Waves => Глас Енімалз, Хіт Вейвз.
+056. Florence + The Machine — Dog Days Are Over => Флоренс Енд Зе Машін, Дог Дейз Ар Оувер.
+057. Yeah Yeah Yeahs — Heads Will Roll => Є Є Єс, Хедз Віл Роул.
+058. Cage The Elephant — Cigarette Daydreams => Кейдж Зе Елефант, Сігарет Дейдрімс.
+059. Twenty One Pilots — Heathens => Твенті Уан Пайлотс, Хізенз.
+060. Imagine Dragons — Whatever It Takes => Імаджин Драгонс, Вотевер Іт Тейкс.
+
+РІВЕНЬ 7 — РАДІО-ФРАЗИ
+061. В ефірі A$AP Rocky — Praise The Lord. => В ефірі Ей-Сап Роккі, Прейз Зе Лорд.
+062. Зустрічайте BTS із хітом Dynamite. => Зустрічайте Бі Ті Ес із хітом Дайнемайт.
+063. Далі звучить Måneskin — I Wanna Be Your Slave. => Далі звучить Манескін, Ай Вона Бі Йор Слейв.
+064. Це Florence + The Machine і Dog Days Are Over. => Це Флоренс Енд Зе Машін, Дог Дейз Ар Оувер.
+065. Наступна композиція від Hozier — Take Me To Church. => Наступна композиція від Хозіер, Тейк Мі Ту Черч.
+066. Для вас BLACKPINK та Selena Gomez — Ice Cream. => Для вас Блекпінк та Селіна Гомез, Айс Крім.
+067. Новий трек від Tate McRae — greedy. => Новий трек від Тейт Макрей, Гріді.
+068. Це легендарні AC/DC із піснею Thunderstruck. => Це легендарні Ей Сі Ді Сі із піснею Сандерстрак.
+069. Слухаємо Rammstein — Sonne. => Слухаємо Рамштайн, Зонне.
+070. Далі в ефірі Stromae — Alors on danse. => Далі в ефірі Стромае, Алор Он Данс.
+
+РІВЕНЬ 8 — СИМВОЛИ, ЧИСЛА Й РОЗДІЛЮВАЧІ
+071. feat. => за участю.
+072. ft. => за участю.
+073. & => і.
+074. x => ікс.
+075. - => кома.
+076. 2000 => дві тисячі.
+077. 1944 => дев'ятнадцять сорок чотири.
+078. 99 Luftballons => Нойн Унд Нойнціх Луфтбалонс.
+079. 7 Years => Севен Єрз.
+080. One More Time => Ван Мор Тайм.
+
+РІВЕНЬ 9 — ФІНАЛЬНИЙ STRESS TEST
+081. ROSÉ & Bruno Mars — APT. => Розе́ і Бруно Марс, Ей-Пі-Ті.
+082. Lady Gaga & Bruno Mars — Die With A Smile => Леді Гага і Бруно Марс, Дай Віз Е Смайл.
+083. Chappell Roan — Good Luck, Babe! => Чапел Роан, Гуд Лак Бейб.
+084. Sabrina Carpenter — Espresso => Сабріна Карпентер, Еспресо.
+085. Charli XCX — 360 => Чарлі Екс Сі Екс, Три Шістдесят.
+086. RÜFÜS DU SOL — Innerbloom => Руфус Дю Сол, Іннерблум.
+087. Fred again.. — adore u => Фред Аген, Едор Ю.
+088. Peggy Gou — (It Goes Like) Nanana => Пеггі Гу, Іт Гоуз Лайк Нана На.
+089. ODESZA — A Moment Apart => Одеса, Е Момент Епарт.
+090. Empire Of The Sun — Walking On A Dream => Емпайр Оф Зе Сан, Вокінг Он Е Дрім.
+091. Röyksopp — What Else Is There? => Ройксоп, Вот Елс Із Зер.
+092. Kygo — Firestone => Кайго, Файрстоун.
+093. MEDUZA — Piece Of Your Heart => Медуза, Піс Оф Йор Харт.
+094. Lost Frequencies — Are You With Me => Лост Фріквенсіз, Ар Ю Віз Мі.
+095. Purple Disco Machine — Hypnotized => Перпл Диско Машін, Гіпнотайзд.
+096. Robin Schulz — Sugar => Робін Шульц, Шугар.
+097. Topic — Breaking Me => Топік, Брейкін Мі.
+098. Alok — Hear Me Now => Алок, Хір Мі Нау.
+099. Ofenbach — Be Mine => Офенбах, Бі Майн.
+100. MEDUZA, James Carter — Bad Memories => Медуза і Джеймс Картер, Бед Меморіз.
+
+МЕТАДАНІ ЗАМІНИ (ТРЕТЄ ПОЛЕ ДЛЯ ПАЙПЛАЙНА)
+001-060, 081-100 | artist_and_title
+061-070 | host_phrase
+071-080 | token_or_number

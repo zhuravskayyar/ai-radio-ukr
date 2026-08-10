@@ -1,0 +1,23 @@
+ТЕСТ ПОМИЛОК ГЕНЕРАЦІЇ ВЕДУЧОГО (20)
+
+Формат: Original | TTS | Type
+001. Сьогодні слухаємо The Weeknd feat. Daft Punk. | Сьогодні слухаємо Зе Вікенд за участю Дафт Панк. | host_phrase
+002. AC/DC & U2. | Ей Сі Ді Сі і Ю Ту. | artist_pair
+003. Далі SZA — Snooze. | Далі Ес-Зі-Ей, Снуз. | host_phrase
+004. Зустрічайте A$AP Rocky з Praise The Lord. | Зустрічайте Ей-Сі-Ей-Пі Роккі з Прейз Зе Лорд. | host_phrase
+005. BLACKPINK & Selena Gomez — Ice Cream! | Блекпінк і Селіна Гомез, Айс Крім. | symbol_and_title
+006. У нас BTS із Dynamite. | У нас Бі Ті Ес із Дайнемайт. | abbreviation
+007. Florence + The Machine — Dog Days Are Over. | Флоренс Енд Зе Машін, Дог Дейз Ар Оувер. | symbol_and_title
+008. Новинка від ROSÉ: APT. | Новинка від Розе́, Ей-Пі-Ті. | stressed_name
+009. Слухаємо (G)I-DLE — Queencard. | Слухаємо Джі Айдл, Квінкард. | unusual_name
+010. Це will.i.am — Scream & Shout. | Це Віл Ай Ем, Скрім Енд Шаут. | symbol_and_title
+011. Увімкнемо blink-182 — All The Small Things. | Увімкнемо Блінк Сто Вісімдесят Два, Ол Зе Смол Сінгс. | number_in_name
+012. Після 2000 року звучить Jamala — 1944. | Після дві тисячі року звучить Джамала, дев'ятнадцять сорок чотири. | number_context
+013. Далі M83 — Midnight City. | Далі Ем Вісімдесят Три, Міднайт Сіті. | abbreviation_and_number
+014. В ефірі Rammstein — Sonne? | В ефірі Рамштайн, Зонне. | punctuation
+015. The Kid LAROI ft. Justin Bieber — Stay. | Зе Кід Ларой за участю Джастін Бібер, Стей. | feature_credit
+016. Hozier — Take Me To Church!!! | Хозіер, Тейк Мі Ту Черч. | punctuation
+017. 99 Luftballons вже в ефірі. | Нойн Унд Нойнціх Луфтбалонс вже в ефірі. | foreign_number
+018. Charli XCX — 360. | Чарлі Екс Сі Екс, Три Шістдесят. | abbreviation_and_number
+019. Fred again.. — adore u. | Фред Аген, Едор Ю. | punctuation_and_name
+020. MEDUZA, James Carter — Bad Memories. | Медуза і Джеймс Картер, Бед Меморіз. | artist_separator

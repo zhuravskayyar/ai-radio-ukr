@@ -1,0 +1,114 @@
+[
+  {
+    "artist": "Black Sabbath",
+    "title": "Paranoid (2009 Remaster)",
+    "stories": [
+      {
+        "category": "SONG_ORIGIN",
+        "hook": "Цю пісню могли взагалі не записати",
+        "story_data": [
+          "Наприкінці роботи над альбомом Black Sabbath бракувало короткої композиції",
+          "Тоні Айоммі на місці придумав основний риф",
+          "Оззі Осборну й Гізеру Батлеру риф нагадав Communication Breakdown гурту Led Zeppelin, тому спочатку вони не хотіли його грати",
+          "У підсумку Paranoid стала однією з найвідоміших композицій Black Sabbath"
+        ],
+        "verified_quote": "",
+        "source_url": "https://www.loudersound.com/features/geezer-butler-interview",
+        "source_title": "Geezer Butler interview — Louder",
+        "confidence": "verified",
+        "duration_class": "normal",
+        "series_key": "black-sabbath-paranoid",
+        "episode": 1,
+        "tease_next": ""
+      }
+    ]
+  },
+  {
+    "artist": "The Offspring",
+    "title": "The Kids Aren't Alright",
+    "stories": [
+      {
+        "category": "LYRICS_ORIGIN",
+        "hook": "Ця пісня почалася не з вигадки, а з поїздки старим районом",
+        "story_data": [
+          "Декстер Голланд повернувся до Ґарден-Ґроув, де виріс разом із майбутніми учасниками The Offspring",
+          "Реальні історії смерті, невдач, виснаження й нездійснених планів його знайомих стали темним боком американського передмістя в тексті пісні"
+        ],
+        "verified_quote": "",
+        "source_url": "https://www.latimes.com/archives/la-xpm-1998-nov-17-ca-43522-story.html",
+        "source_title": "The 'Americana' Dream — Los Angeles Times",
+        "confidence": "verified",
+        "duration_class": "normal",
+        "series_key": "offspring-kids-arent-alright",
+        "episode": 1,
+        "tease_next": ""
+      }
+    ]
+  },
+  {
+    "artist": "Creedence Clearwater Revival",
+    "title": "Have You Ever Seen The Rain",
+    "stories": [
+      {
+        "category": "LYRICS_ORIGIN",
+        "hook": "Дощ у цій пісні був не стільки про погоду, скільки про сам гурт",
+        "story_data": [
+          "Джон Фоґерті пояснював, що написав її про розпад Creedence Clearwater Revival",
+          "Гурт був на вершині успіху, але всередині учасники вже були нещасні — звідси образ дощу посеред ясного дня"
+        ],
+        "verified_quote": "",
+        "source_url": "https://www.guitarplayer.com/music/albums-singles/john-fogerty-on-the-song-that-foretold-the-breakup-of-ccr",
+        "source_title": "John Fogerty on the song that foretold the breakup of CCR — Guitar Player",
+        "confidence": "verified",
+        "duration_class": "normal",
+        "series_key": "ccr-have-you-ever-seen-rain",
+        "episode": 1,
+        "tease_next": ""
+      }
+    ]
+  },
+  {
+    "artist": "Kiss",
+    "title": "I Was Made For Lovin' You",
+    "stories": [
+      {
+        "category": "RECORDING_TRICK",
+        "hook": "Один із найбільших хітів Kiss почався з ритму, який Пол Стенлі почув у Studio 54",
+        "story_data": [
+          "Стенлі помітив, що танцювальні композиції тримають приблизно сто двадцять шість ударів за хвилину й говорять про теперішній момент",
+          "Він повернувся додому, виставив драм-машину на цей темп і почав писати I Was Made For Lovin' You"
+        ],
+        "verified_quote": "",
+        "source_url": "https://www.paulstanley.com/2015/05/the-starchild-talks-us-through-some-of-the-key-songs-in-his-glittering-career/",
+        "source_title": "The Starchild talks us through key songs — Paul Stanley",
+        "confidence": "verified",
+        "duration_class": "normal",
+        "series_key": "kiss-i-was-made",
+        "episode": 1,
+        "tease_next": ""
+      }
+    ]
+  },
+  {
+    "artist": "Bon Jovi",
+    "title": "Runaway",
+    "stories": [
+      {
+        "category": "ACCIDENTAL_HIT",
+        "hook": "Ця пісня стала радіохітом ще до появи звичного складу Bon Jovi",
+        "story_data": [
+          "Runaway потрапила до збірки місцевих нью-йоркських виконавців New York Rocks, яку у тисяча дев'ятсот вісімдесят третьому випустила станція WAPP",
+          "Регулярна ротація на WAPP зробила пісню регіональним хітом, після чого її помітили інші ринки й кар'єра гурту зрушила з місця"
+        ],
+        "verified_quote": "",
+        "source_url": "https://backstage.bonjovi.com/studio/collections/runaway",
+        "source_title": "Runaway — Backstage with Bon Jovi",
+        "confidence": "verified",
+        "duration_class": "normal",
+        "series_key": "bon-jovi-runaway",
+        "episode": 1,
+        "tease_next": ""
+      }
+    ]
+  }
+]
