@@ -38,6 +38,7 @@ from .transition_director import TransitionDirector
 from .voice_director import VoiceDirector
 from .host_brain import HostBrain
 from .radio_queue import RadioQueueManager
+from .broadcast_safety import BroadcastSafety
 
 
 DEFAULT_TTS_VOICE = "uk-UA-OstapNeural"
@@ -45,7 +46,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_AI_MAX_TOKENS = int(DEFAULTS["ai_max_tokens"])
 # Bump this whenever the editorial contract for generated host copy changes.
 # RadioAPI will then discard text and prepared transitions from older prompts.
-HOST_PROMPT_VERSION = "2026-08-10-evidence-map-v5"
+HOST_PROMPT_VERSION = "2026-08-10-adam-vector-clock-v2"
 
 
 def _normalized_ai_max_tokens(settings=None):
@@ -632,7 +633,7 @@ def _canonicalize_verified_track_mentions(copy, track, mention_policy):
 
 
 def persona_fallback_copy(track, current, context, plan):
-    """A short Lumen-style fallback that respects the selected structure."""
+    """A short Adam Vector fallback that respects the selected structure."""
     structure = (plan or {}).get("structure") or "announce"
     reaction = (plan or {}).get("reaction") or "neutral"
     length_class = (plan or {}).get("length_class") or "short"
@@ -779,6 +780,14 @@ def contextual_fallback_copy(track, current, style, context, plan, short=False):
 
     if content_type == "top_of_hour" and time_context.get("time"):
         exact_time = time_context["time"]
+        if (plan or {}).get("clock_slot_id") == "hour_open":
+            persona = ((context or {}).get("personality") or {}).get("persona") or {}
+            host_name = persona.get("name") or "Адам Вектор"
+            station_name = station.get("name") or "LUMEN RADIO"
+            return (
+                f"Я — {host_name}, цифровий ведучий {station_name}. "
+                f"У {city} зараз {exact_time}. Цю годину відкриває [[NEXT_TRACK]]."
+            )
         return f"У {city} зараз {exact_time}. Цю годину продовжує [[NEXT_TRACK]]."
 
     if content_type in {"weather_touch", "weather_change"} and weather.get("available"):
@@ -793,7 +802,12 @@ def contextual_fallback_copy(track, current, style, context, plan, short=False):
             elif abs(float(weather.get("temperature_change_3h") or 0)) >= 6:
                 direction = "потеплішає" if float(weather["temperature_change_3h"]) > 0 else "похолодає"
                 weather_line += f", і протягом трьох годин помітно {direction}"
-        return f"{weather_line}. На цьому тлі починається [[NEXT_TRACK]]."
+        time_prefix = (
+            f"Зараз {time_context.get('time')}. "
+            if (plan or {}).get("must_say_time") and time_context.get("time")
+            else ""
+        )
+        return f"{time_prefix}{weather_line}. На цьому тлі починається [[NEXT_TRACK]]."
 
     if content_type == "mood_check":
         return "Тримаємо ефір по настрою, рівно в цей нерв вечора. Його підхоплює [[NEXT_TRACK]]."
@@ -876,6 +890,7 @@ class RadioAPI:
         self.music_knowledge = self.content_planner.knowledge_base
         self.voice_director = VoiceDirector(DEFAULT_TTS_VOICE)
         self.host_brain = HostBrain(self.db, self.content_planner, self.voice_director, self.music_knowledge)
+        self.broadcast_safety = BroadcastSafety(self.db)
         self._prepare_lock = threading.Lock()
         # Keep the static demo chart only as an offline/dev bootstrap. In a
         # configured live station the library must come from imported files or
@@ -1070,6 +1085,8 @@ class RadioAPI:
                 "tracks": self._ai_library_tracks(),
                 "settings": settings,
                 "radio_queue": queue,
+                "pilot_clock": self.pilot_hour(),
+                "broadcast_safety": self.broadcast_safety.status(),
             }
         except Exception as exc:
             # pywebview promise rejections otherwise lose the Python traceback
@@ -1082,6 +1099,96 @@ class RadioAPI:
                 "settings": {},
                 "radio_queue": None,
             }
+
+    def pilot_hour(self, reference_iso=None):
+        settings = self.db.settings()
+        if str(settings.get("pilot_clock_enabled", "1")) != "1":
+            return {"ok": True, "enabled": False, "segments": []}
+        time_context = self.context_engine.time_context(reference_iso, settings)
+        rundown = self.context_engine.pilot_clock.rundown(
+            time_context.iso,
+            settings.get("responsible_editor", "").strip(),
+        )
+        events = self.db.rundown_events(rundown["hour_key"])
+        by_slot = {segment["slot_id"]: segment for segment in rundown["segments"]}
+        for segment in rundown["segments"]:
+            segment["items"] = []
+        for event in events:
+            try:
+                plan = json.loads(event.get("plan_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                plan = {}
+            item = {
+                "id": event.get("id"),
+                "slot_id": event.get("slot_id", ""),
+                "planned_for": event.get("planned_for", ""),
+                "aired_at": event.get("aired_at", ""),
+                "timing_error_seconds": event.get("timing_error_seconds"),
+                "timing_status": event.get("timing_status", "planned"),
+                "content_type": event.get("content_type", ""),
+                "current_track_id": event.get("current_track_id"),
+                "next_track_id": event.get("next_track_id"),
+                "verification_status": plan.get("verification_status", ""),
+                "thesis": plan.get("thesis", ""),
+                "fallback": plan.get("fallback", ""),
+            }
+            segment = by_slot.get(event.get("slot_id"))
+            if segment is not None:
+                segment["items"].append(item)
+        hard_events = [event for event in events if event.get("hard_time")]
+        aired_hard_events = [event for event in hard_events if event.get("aired_at")]
+        on_time = [
+            event for event in aired_hard_events
+            if event.get("timing_status") == "on_time"
+        ]
+        return {
+            "ok": True,
+            **rundown,
+            "events": events,
+            "metrics": {
+                "planned_events": len(events),
+                "aired_events": sum(bool(event.get("aired_at")) for event in events),
+                "hard_points_aired": len(aired_hard_events),
+                "hard_points_on_time": len(on_time),
+                "hard_point_accuracy_percent": (
+                    round(len(on_time) / len(aired_hard_events) * 100, 1)
+                    if aired_hard_events else None
+                ),
+            },
+        }
+
+    def emergency_protocol(self, event_type, details=None):
+        details = dict(details or {})
+        if not details.get("responsible_editor"):
+            details["responsible_editor"] = self.db.settings().get(
+                "responsible_editor", ""
+            )
+        return self.broadcast_safety.protocol(event_type, details)
+
+    def record_broadcast_event(self, event_type, details=None):
+        return self.emergency_protocol(event_type, details)
+
+    def queue_correction(
+        self, original, corrected, source_url, source_title, editor="",
+    ):
+        responsible_editor = str(editor or "").strip() or self.db.settings().get(
+            "responsible_editor", ""
+        )
+        return self.broadcast_safety.correction(
+            original, corrected, source_url, source_title, responsible_editor,
+        )
+
+    def resolve_broadcast_event(self, event_id, status="resolved"):
+        status = str(status or "resolved").strip().casefold()
+        if status not in {"resolved", "aired", "rejected"}:
+            return {"ok": False, "error": "Недозволений статус події"}
+        self.db.resolve_broadcast_event(
+            int(event_id), status, datetime.now(timezone.utc).isoformat()
+        )
+        return {"ok": True, "status": status}
+
+    def broadcast_safety_status(self):
+        return self.broadcast_safety.status()
 
     def _ai_library_tracks(self):
         tracks = []
@@ -1105,6 +1212,11 @@ class RadioAPI:
         settings["nvidia_key_detected"] = bool(self._nvidia_key(settings))
         settings["secondary_key_detected"] = bool(self._secondary_key(settings))
         settings["youtube_key_detected"] = bool(self._youtube_key(settings))
+        # The WebView only needs presence flags. Never send stored secrets back
+        # to JavaScript or make them visible again after the initial import.
+        settings["nvidia_api_key"] = ""
+        settings["secondary_api_key"] = ""
+        settings["youtube_api_key"] = ""
         try:
             from .tts_styletts import styletts_status
 
@@ -1568,6 +1680,55 @@ class RadioAPI:
         self.db.replace_tracks(tracks)
         return {"ok": True, "count": len(tracks), "tracks": self.db.tracks()}
 
+    def import_api_text(self, text):
+        """Validate a pasted TXT and store recognised provider keys locally.
+
+        Labels are optional, so both ``NVIDIA_API_KEY=nvapi-...`` and a raw
+        token work. Secrets are never returned to the WebView or written to a
+        log. At least one supported completion provider is required.
+        """
+        raw = str(text or "")
+        if len(raw.encode("utf-8", errors="ignore")) > 65536:
+            return {"ok": False, "error": "API TXT завеликий. Максимум — 64 КБ."}
+        patterns = {
+            "NVIDIA": r"nvapi-[A-Za-z0-9_-]{16,}",
+            "OpenRouter": r"sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}",
+            "YouTube": r"AIza[A-Za-z0-9_-]{20,}",
+        }
+        found = {
+            provider: next(iter(re.findall(pattern, raw)), "")
+            for provider, pattern in patterns.items()
+        }
+        completion_providers = [
+            provider for provider in ("NVIDIA", "OpenRouter") if found[provider]
+        ]
+        if not completion_providers:
+            return {
+                "ok": False,
+                "error": (
+                    "Не знайдено ключ NVIDIA (nvapi-…) або OpenRouter "
+                    "(sk-or-v1-…). Вставте повний ключ без лапок."
+                ),
+            }
+        values = {}
+        if found["NVIDIA"]:
+            values["nvidia_api_key"] = found["NVIDIA"]
+        if found["OpenRouter"]:
+            values.update({
+                "secondary_api_key": found["OpenRouter"],
+                "secondary_api_enabled": "1",
+                "secondary_api_url": "https://openrouter.ai/api/v1/chat/completions",
+            })
+        if found["YouTube"]:
+            values["youtube_api_key"] = found["YouTube"]
+        self.db.save_settings(values)
+        providers = completion_providers + (["YouTube"] if found["YouTube"] else [])
+        return {
+            "ok": True,
+            "providers": providers,
+            "settings": self._settings_payload(),
+        }
+
     def import_library_file(self):
         path = self.root / "library-import.txt"
         if not path.exists():
@@ -1578,7 +1739,13 @@ class RadioAPI:
             return {"ok": False, "error": f"Не вдалося прочитати файл: {exc}"}
 
     def save_settings(self, values):
-        values = values or {}
+        values = dict(values or {})
+        # Empty password fields mean "keep the stored key", not "erase it".
+        # Credential replacement happens through import_api_text or by entering
+        # a non-empty value in the legacy advanced form.
+        for key in ("nvidia_api_key", "secondary_api_key", "youtube_api_key"):
+            if key in values and not str(values[key] or "").strip():
+                values.pop(key)
         previous = self.db.settings()
         self.db.save_settings(values)
         if (
@@ -3040,6 +3207,7 @@ artist_speech і title_speech мають бути записані україн�
             story_verification_status = str(
                 story_verification.get("status") or "single_source"
             )
+            serious_mode = bool(story_verification.get("sensitive"))
             story_evidence_rule = {
                 "corroborated": (
                     "Картка має незалежне підтвердження. Не перебільшуй рівень певності "
@@ -3071,10 +3239,17 @@ MUSIC STORY MODE:
                     "Це короткий авторський блок у рок-ефірі: факт або історія має звучати людською мовою, "
                     "з одним чітким поворотом і природним виходом у пісню.\n"
                 )
+            serious_mode_rule = (
+                "\nСЕРЙОЗНИЙ РЕЖИМ АКТИВНИЙ: тема чутлива. Повністю вимкни гумор, "
+                "сарказм, гру слів і легковажні образи. Назви джерело або рівень певності, "
+                "не драматизуй і не роби власних висновків поза перевіреною карткою.\n"
+                if serious_mode else ""
+            )
             system_prompt = f"""{self.host_brain.persona_prompt()}
-Ти не пишеш «красиві тексти», а говориш як жива людина в реальному ефірі й одразу для українського TTS.
+Ти не пишеш «красиві тексти», а говориш природно й розмовно як професійний ведучий у реальному ефірі та одразу для українського TTS.
 {story_rules}
 {program_rules}
+{serious_mode_rule}
 
 Говори одному слухачеві, ніби мікрофон щойно відкрився. Не будуй вступ,
 основну частину й фінал. Почни одразу з живої думки та дотримайся
@@ -3110,6 +3285,14 @@ MENTION_POLICY: {mention_policy}.
 
 CONTENT DIRECTOR: {plan.get("directive", "Один гачок, максимум один жарт і природний вихід у пісню.")}
 ANNOUNCE MODE: {plan.get("announce_mode", "forward")}. Режим задає порядок думки, але не скасовує MENTION_POLICY; `cold_open` починає без привітання, `station_id` не вигадує назв.
+
+RUNDOWN: версія {plan.get('clock_version', 'без clock')}; слот {plan.get('clock_slot_id', '')} — {plan.get('clock_slot_name', '')}.
+HARD TIME: {plan.get('hard_time', '') or 'немає'}; допустиме відхилення {plan.get('timing_tolerance_seconds', '') or 'не задано'} секунд.
+ТЕЗА СЛОТА: {plan.get('thesis', '')}
+ПОЛІТИКА ДЖЕРЕЛ: {plan.get('source_policy', '')}
+ЗАБОРОНЕНІ ТВЕРДЖЕННЯ: {json.dumps(plan.get('forbidden_claims', []), ensure_ascii=False)}
+ВІДПОВІДАЛЬНИЙ РЕДАКТОР: {plan.get('responsible_editor', 'НЕ ПРИЗНАЧЕНО')}.
+ВХІД: {plan.get('entry_cue', '')} ВИХІД: {plan.get('exit_cue', '')} FALLBACK: {plan.get('fallback', '')}
 
 VOICE DIRECTOR: {self.voice_director.prompt_directive(voice_profile)}
 
@@ -3598,6 +3781,33 @@ CONTEXT_JSON:
             "spelling_checked": True,
         }
 
+    def _record_rundown_transition(self, transition):
+        try:
+            plan = json.loads(transition.get("plan_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not plan.get("clock_slot_id") or not transition.get("scheduled_for"):
+            return
+        planned_start = str(plan.get("planned_start") or "")
+        try:
+            hour_key = datetime.fromisoformat(planned_start).strftime("%Y-%m-%dT%H")
+        except ValueError:
+            hour_key = ""
+        self.db.save_rundown_event({
+            "clock_version": plan.get("clock_version", ""),
+            "hour_key": hour_key,
+            "slot_id": plan.get("clock_slot_id", ""),
+            "hard_time": plan.get("hard_time", ""),
+            "planned_for": transition.get("scheduled_for", ""),
+            "timing_error_seconds": plan.get("timing_error_seconds"),
+            "timing_status": "planned",
+            "current_track_id": transition.get("current_track_id"),
+            "next_track_id": transition.get("next_track_id"),
+            "content_type": transition.get("content_type", ""),
+            "responsible_editor": plan.get("responsible_editor", ""),
+            "plan_json": json.dumps(plan, ensure_ascii=False),
+        })
+
     def prepare_transition(
         self, current_track_id, next_track_id, scheduled_for=None,
         sequence_offset=0, force=False,
@@ -3675,6 +3885,7 @@ CONTEXT_JSON:
                 "display_text": "",
                 "created_at": now.isoformat(),
             })
+            self._record_rundown_transition(transition)
             return {"ok": True, "transition": transition, "reused": False}
 
         if content_plan.content_type == "clean_segue":
@@ -3847,6 +4058,7 @@ CONTEXT_JSON:
             "ending_type": content_plan.mention_policy,
             "energy": next_track.get("energy"),
         })
+        self._record_rundown_transition(transition)
         return {"ok": True, "transition": transition, "reused": False}
 
     def prepare_transition_queue(self, track_ids, eta_seconds=0):
@@ -3878,12 +4090,23 @@ CONTEXT_JSON:
                         "transition": {"status": "emergency"},
                     }
                 transition = result.get("transition") or {}
+                try:
+                    rundown_plan = json.loads(transition.get("plan_json") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    rundown_plan = {}
                 prepared.append({
                     "current_track_id": current_id,
                     "next_track_id": next_id,
                     "status": transition.get("status", "failed"),
                     "transition_type": transition.get("transition_type", "clean_segue"),
                     "content_type": transition.get("content_type", "none"),
+                    "scheduled_for": transition.get("scheduled_for", ""),
+                    "clock_version": rundown_plan.get("clock_version", ""),
+                    "clock_slot_id": rundown_plan.get("clock_slot_id", ""),
+                    "clock_slot_name": rundown_plan.get("clock_slot_name", ""),
+                    "hard_time": rundown_plan.get("hard_time", ""),
+                    "timing_error_seconds": rundown_plan.get("timing_error_seconds"),
+                    "responsible_editor": rundown_plan.get("responsible_editor", ""),
                     "reused": bool(result.get("reused")),
                     "error": result.get("error", ""),
                 })
@@ -4009,7 +4232,39 @@ CONTEXT_JSON:
     def mark_transition_aired(self, current_track_id, next_track_id):
         transition = self.db.transition(int(current_track_id), int(next_track_id))
         if transition:
-            self.content_planner.mark_aired(transition)
+            aired = datetime.now(timezone.utc)
+            self.content_planner.mark_aired(transition, aired.isoformat())
+            try:
+                plan = json.loads(transition.get("plan_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                plan = {}
+            comparison_time = plan.get("hard_time") or transition.get("scheduled_for")
+            timing_error = None
+            timing_status = "aired"
+            if comparison_time:
+                try:
+                    target = datetime.fromisoformat(comparison_time)
+                    if target.tzinfo is None:
+                        target = target.replace(tzinfo=timezone.utc)
+                    timing_error = round(
+                        (aired - target.astimezone(timezone.utc)).total_seconds(), 3
+                    )
+                    if plan.get("hard_time"):
+                        tolerance = int(plan.get("timing_tolerance_seconds") or 5)
+                        timing_status = (
+                            "on_time" if abs(timing_error) <= tolerance
+                            else "early" if timing_error < 0 else "late"
+                        )
+                except (TypeError, ValueError):
+                    pass
+            self.db.mark_rundown_aired(
+                current_track_id,
+                next_track_id,
+                transition.get("scheduled_for", ""),
+                aired.isoformat(),
+                timing_error,
+                timing_status,
+            )
         return {"ok": True}
 
     def set_track_analysis(self, track_id, values):

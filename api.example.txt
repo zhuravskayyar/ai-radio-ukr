@@ -1,0 +1,7 @@
+# Vector Radio API keys. Збережіть файл у UTF-8.
+# Потрібен щонайменше один ключ: NVIDIA або OpenRouter.
+NVIDIA_API_KEY=nvapi-ваш_ключ
+OPENROUTER_API_KEY=sk-or-v1-ваш_ключ
+
+# Необов'язково. Потрібен лише допоміжним YouTube-скриптам.
+YOUTUBE_API_KEY=AIza-ваш_ключ

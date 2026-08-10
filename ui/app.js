@@ -31,6 +31,15 @@ const state = {
   rotationCycle: 1,
   tracksSinceStory: 3,
   radioQueue: null,
+  pilotClock: null,
+  broadcastSafety: null,
+  manualPause: false,
+  lastAudibleAt: Date.now(),
+  silenceWarningActive: false,
+  emergencyRecoveryBusy: false,
+  silenceWarnings: 0,
+  silenceFallbacks: 0,
+  watchdogState: 'armed',
 };
 
 let booted = false;
@@ -68,6 +77,8 @@ async function boot() {
     if (!data?.ok) throw new Error(data?.error || 'Backend не відповів');
     state.tracks = data.tracks;
     state.settings = data.settings;
+    state.pilotClock = data.pilot_clock || null;
+    state.broadcastSafety = data.broadcast_safety || null;
     ensureCharacterSettings();
     ensureLibraryActions();
     fillSettings();
@@ -75,6 +86,8 @@ async function boot() {
     if (!applyRadioQueue(data.radio_queue, true)) {
       select(randomFirstPlayableIndex());
     }
+    renderRundown();
+    renderSafetyStatus();
     if (String(state.settings.use_styletts ?? '1') === '1'
         && state.settings.styletts_status?.ready) {
       // Warm the CPU model in a pywebview worker. Do not await it: the library
@@ -157,7 +170,7 @@ function ensureCharacterSettings() {
             <option value="local_uk">Локальна розмовна</option>
           </select>
         </label>
-        <p class="hint">Люмен чергує оголошення, настрій, містки, звернення й сухі жарти; пам’ятає останні структури. Довгі репліки рідкісні, факти лише перевірені.</p>
+        <p class="hint">Адам Вектор — відкрито цифровий ведучий: допитливий, точний і сухо самоіронічний. Він має музичний смак, не вигадує людського досвіду, а на чутливих темах одразу вимикає гумор.</p>
       </article>`);
   }
 
@@ -244,13 +257,28 @@ function ensureCharacterSettings() {
         <label>Широта для погоди<input type="number" step="0.0001" data-setting="weather_latitude"></label>
         <label>Довгота для погоди<input type="number" step="0.0001" data-setting="weather_longitude"></label>
         <label>Назва програми<input data-setting="program_name"></label>
+        <label>Відповідальний редактор<input data-setting="responsible_editor" placeholder="Ім’я та прізвище"></label>
+        <label>Пілотний clock
+          <select data-setting="pilot_clock_enabled">
+            <option value="1">Увімкнений · 60 хв</option>
+            <option value="0">Вимкнений · legacy planning</option>
+          </select>
+        </label>
+        <label>Watchdog тиші
+          <select data-setting="silence_watchdog_enabled">
+            <option value="1">Увімкнений</option>
+            <option value="0">Вимкнений</option>
+          </select>
+        </label>
+        <label>Попередження, сек<input type="number" min="2" max="3" step="1" data-setting="silence_warning_seconds"></label>
+        <label>Аварійний резерв, сек<input type="number" min="5" max="8" step="1" data-setting="silence_fallback_seconds"></label>
         <label>Погода
           <select data-setting="weather_enabled">
             <option value="0">Вимкнена</option>
             <option value="1">Open-Meteo, кеш 30 хв</option>
           </select>
         </label>
-        <p class="hint">Час береться для фактичного запланованого переходу. Погода використовується лише з кешованої відповіді API й ніколи не вигадується.</p>
+        <p class="hint">Час береться для фактичного запланованого переходу. Погода використовується лише з кешованої відповіді API й ніколи не вигадується. Watchdog контролює стан локального плеєра й TTS: попереджає через 2–3 с, а через 5–8 с запускає перевірений резерв.</p>
       </article>`);
   }
 
@@ -418,6 +446,10 @@ function fillSettings() {
   if (stationTitle) stationTitle.textContent = state.settings.station_name;
   const hostName = $('#hostName');
   if (hostName) hostName.textContent = state.settings.host_name;
+  const simpleStationPrompt = $('#simpleStationPrompt');
+  if (simpleStationPrompt) {
+    simpleStationPrompt.value = state.settings.station_prompt || '';
+  }
   const nvidiaStatus = $('#nvidiaStatus');
   if (nvidiaStatus) {
     nvidiaStatus.textContent = state.settings.nvidia_key_detected
@@ -460,6 +492,7 @@ function fillSettings() {
       ? (licensed ? '● AI-пошук дозволений · refill у фоні' : '○ Потрібне підтвердження прав')
       : '● Буфер працює з локальної резервної бібліотеки';
   }
+  renderSafetyStatus();
 }
 
 function isRejectedDiscoveryCache(track) {
@@ -700,9 +733,236 @@ function render() {
       item.current_track_id === fromTrack?.id && item.next_track_id === track.id,
     );
     const readiness = prepared?.status === 'ready' ? ' · READY' : prepared ? ' · PREP' : '';
-    return `<div class="queueItem"><span class="num">0${offset + 1}</span><div><b>${esc(track.title)}</b><small>${esc(track.artist)}${readiness}</small></div><button onclick="tune(${index})">▶</button></div>`;
+    const clockSlot = prepared?.clock_slot_id ? ` · ${prepared.clock_slot_id.replaceAll('_', ' ')}` : '';
+    return `<div class="queueItem"><span class="num">0${offset + 1}</span><div><b>${esc(track.title)}</b><small>${esc(track.artist)}${readiness}${esc(clockSlot)}</small></div><button onclick="tune(${index})">▶</button></div>`;
   }).join('') || '<p class="hint">Ще немає перевірених треків</p>';
+  renderRundown();
   renderLibrary();
+}
+
+function renderRundown() {
+  const root = $('#rundown');
+  if (!root) return;
+  const clock = state.pilotClock;
+  if (!clock?.enabled) {
+    root.innerHTML = '<p class="hint">Пілотний clock вимкнений.</p>';
+    $('#rundownMeta').textContent = 'Legacy planning без фіксованої 60-хвилинної сітки';
+    $('#rundownAccuracy').textContent = 'HARD —';
+    return;
+  }
+  const editor = clock.editor_status === 'assigned'
+    ? clock.responsible_editor : 'редактор не призначений';
+  $('#rundownMeta').textContent = `${clock.version} · 60:00 · ${clock.segment_count} сегментів · ${editor}`;
+  const accuracy = clock.metrics?.hard_point_accuracy_percent;
+  $('#rundownAccuracy').textContent = accuracy == null
+    ? 'HARD —' : `HARD ${accuracy}%`;
+  root.innerHTML = (clock.segments || []).map(segment => {
+    const current = segment.slot_id === clock.current_slot_id ? ' current' : '';
+    const hard = segment.hard_point ? ' hard' : '';
+    const event = (segment.items || []).at(-1);
+    const eventText = event
+      ? `<small class="event">${esc(event.content_type)} · ${esc(event.timing_status)}</small>`
+      : '';
+    return `<article class="rundown-item${current}${hard}">
+      <time>${esc(String(segment.planned_start || '').slice(11, 16))}</time>
+      <b>${esc(segment.name)}</b>
+      <small>${esc(segment.thesis)}</small>
+      ${eventText}
+    </article>`;
+  }).join('');
+}
+
+async function refreshPilotClock() {
+  const api = window.pywebview?.api;
+  if (typeof api?.pilot_hour !== 'function') return;
+  try {
+    const clock = await api.pilot_hour();
+    if (clock?.ok) {
+      state.pilotClock = clock;
+      renderRundown();
+    }
+  } catch (error) {
+    console.warn('Pilot clock refresh failed', error);
+  }
+}
+
+function watchdogThresholds() {
+  const warning = Math.max(2, Math.min(3,
+    Math.round(settingNumber('silence_warning_seconds', 3))));
+  const fallback = Math.max(warning + 2, Math.min(8,
+    Math.round(settingNumber('silence_fallback_seconds', 7))));
+  return {warning, fallback};
+}
+
+function watchdogEnabled() {
+  return String(state.settings.silence_watchdog_enabled ?? '1') === '1';
+}
+
+function hasAudibleOutput() {
+  const localPlaying = !!state.localAudio
+    && !state.localAudio.paused
+    && !state.localAudio.ended;
+  const voicePlaying = !!state.voiceAudio
+    && !state.voiceAudio.paused
+    && !state.voiceAudio.ended;
+  return localPlaying || voicePlaying || state.systemVoicePlaying;
+}
+
+function renderSafetyStatus() {
+  const element = $('#safetyStatus');
+  if (!element) return;
+  const {warning, fallback} = watchdogThresholds();
+  const labels = {
+    disabled: '○ Watchdog вимкнений',
+    paused: '○ Watchdog · ручна пауза',
+    warning: `⚠ Тиша понад ${warning} с · очікую резерв`,
+    recovery: '⚠ Watchdog · аварійне відновлення',
+    armed: `● Watchdog ${warning}/${fallback} с`,
+  };
+  element.textContent = labels[state.watchdogState] || labels.armed;
+  element.dataset.state = state.watchdogState;
+}
+
+async function refreshBroadcastSafety() {
+  const api = window.pywebview?.api;
+  if (typeof api?.broadcast_safety_status !== 'function') return;
+  try {
+    const result = await api.broadcast_safety_status();
+    if (result?.ok) state.broadcastSafety = result;
+  } catch (error) {
+    console.warn('Broadcast safety refresh failed', error);
+  }
+}
+
+function logBroadcastEvent(eventType, details = {}) {
+  const api = window.pywebview?.api;
+  if (typeof api?.record_broadcast_event !== 'function') return;
+  void api.record_broadcast_event(eventType, details)
+    .then(() => refreshBroadcastSafety())
+    .catch(error => console.warn('Broadcast event log failed', error));
+}
+
+function noteAudibleOutput(method = 'playback') {
+  const recoveredAfterWarning = state.silenceWarningActive
+    && !state.emergencyRecoveryBusy;
+  state.lastAudibleAt = Date.now();
+  state.silenceWarningActive = false;
+  state.watchdogState = watchdogEnabled() ? 'armed' : 'disabled';
+  renderSafetyStatus();
+  if (recoveredAfterWarning) {
+    logBroadcastEvent('silence_recovered', {
+      method,
+      current_track_id: state.tracks[state.index]?.id || null,
+    });
+  }
+}
+
+async function recoverFromDeadAir(silentSeconds) {
+  if (state.emergencyRecoveryBusy || state.manualPause) return;
+  state.emergencyRecoveryBusy = true;
+  state.silenceFallbacks += 1;
+  state.watchdogState = 'recovery';
+  state.emergencySegue = true;
+  renderSafetyStatus();
+  let method = '';
+  let protocol = null;
+  try {
+    const api = window.pywebview?.api;
+    if (typeof api?.emergency_protocol === 'function') {
+      protocol = await api.emergency_protocol('dead_air', {
+        silent_seconds: silentSeconds,
+        current_track_id: state.tracks[state.index]?.id || null,
+        responsible_editor: state.settings.responsible_editor || '',
+      });
+    }
+
+    const local = state.localAudio;
+    const resumable = local && local.paused && !local.ended
+      && (!Number.isFinite(local.duration) || local.currentTime < local.duration - 0.25);
+    if (resumable) {
+      try {
+        await local.play();
+        if (!local.paused) method = 'resume_current_track';
+      } catch (error) {
+        console.warn('Current track recovery failed', error);
+      }
+    }
+
+    if (!method && !state.automationBusy && state.tracks[state.index]) {
+      await handleTrackEnded();
+      if (hasAudibleOutput()) method = 'next_local_track';
+    }
+
+    if (!method) {
+      state.broadcastStarted = false;
+      const text = protocol?.display_text
+        || 'Маємо технічну паузу. Відновлюю музичний ефір із перевіреного резерву.';
+      $('#intro').textContent = `«${text}»`;
+      await speak(text, false);
+      method = 'technical_pause_announcement';
+    }
+
+    logBroadcastEvent('silence_recovered', {
+      method,
+      silent_seconds: silentSeconds,
+      current_track_id: state.tracks[state.index]?.id || null,
+    });
+    state.lastAudibleAt = Date.now();
+    state.silenceWarningActive = false;
+    toast(`Ефір відновлено: ${method.replaceAll('_', ' ')}`);
+  } catch (error) {
+    state.lastAutomationError = String(error?.message || error);
+    console.error('Dead-air recovery failed', error);
+    toast(`Аварійне відновлення не завершено: ${state.lastAutomationError}`);
+  } finally {
+    state.emergencyRecoveryBusy = false;
+    state.watchdogState = watchdogEnabled() ? 'armed' : 'disabled';
+    renderSafetyStatus();
+    void refreshBroadcastSafety();
+  }
+}
+
+function checkSilenceWatchdog() {
+  if (!watchdogEnabled()) {
+    state.silenceWarningActive = false;
+    if (state.watchdogState !== 'disabled') {
+      state.watchdogState = 'disabled';
+      renderSafetyStatus();
+    }
+    return;
+  }
+  if (!state.broadcastStarted || state.manualPause || state.autoplayBlocked) {
+    state.lastAudibleAt = Date.now();
+    state.silenceWarningActive = false;
+    const nextState = state.manualPause ? 'paused' : 'armed';
+    if (state.watchdogState !== nextState) {
+      state.watchdogState = nextState;
+      renderSafetyStatus();
+    }
+    return;
+  }
+  if (hasAudibleOutput()) {
+    noteAudibleOutput('playback_resumed');
+    return;
+  }
+
+  const {warning, fallback} = watchdogThresholds();
+  const silentSeconds = (Date.now() - state.lastAudibleAt) / 1000;
+  if (silentSeconds >= warning && !state.silenceWarningActive) {
+    state.silenceWarningActive = true;
+    state.silenceWarnings += 1;
+    state.watchdogState = 'warning';
+    renderSafetyStatus();
+    toast(`Watchdog: тиша ${silentSeconds.toFixed(1)} с`);
+    logBroadcastEvent('silence_warning', {
+      silent_seconds: Number(silentSeconds.toFixed(2)),
+      current_track_id: state.tracks[state.index]?.id || null,
+    });
+  }
+  if (silentSeconds >= fallback && !state.automationBusy
+      && !state.emergencyRecoveryBusy) {
+    void recoverFromDeadAir(Number(silentSeconds.toFixed(2)));
+  }
 }
 
 function renderLibrary() {
@@ -1040,6 +1300,8 @@ async function playAtVolume(volume) {
       state.audioTrackId = track.id;
       state.localAudio.onplay = () => {
         state.playing = true;
+        state.autoplayBlocked = false;
+        noteAudibleOutput('local_track');
         $('#play').textContent = 'Ⅱ';
       };
       state.localAudio.ontimeupdate = () => maybeStartOutroVoice();
@@ -1122,6 +1384,7 @@ async function prefetchUpcomingTransitions() {
         render();
       }
     }
+    await refreshPilotClock();
   } catch (error) {
     state.prefetchSignature = '';
     console.warn('Transition pre-generation failed', error);
@@ -1391,6 +1654,7 @@ window.tune = tune;
 
 function pauseBroadcast() {
   state.sequenceId += 1;
+  state.manualPause = true;
   state.pendingTrackEnd = false;
   if (state.localAudio) state.localAudio.pause();
   else state.player?.pauseVideo();
@@ -1408,6 +1672,8 @@ $('#play').onclick = async () => {
     pauseBroadcast();
     return;
   }
+  state.manualPause = false;
+  state.lastAudibleAt = Date.now();
   if (!state.broadcastStarted || state.autoplayBlocked) await startBroadcast();
   else await playAtVolume(programVolume());
 };
@@ -1452,6 +1718,7 @@ function playVoiceAudio(audio) {
     };
     state.voiceResolve = finish;
     state.voiceAudio = new Audio(audio);
+    state.voiceAudio.onplay = () => noteAudibleOutput('tts_audio');
     state.voiceAudio.onended = finish;
     state.voiceAudio.onerror = () => {
       toast('Не вдалося програти TTS');
@@ -1481,6 +1748,7 @@ function playSystemVoice(text) {
     };
     state.voiceResolve = finish;
     state.systemVoicePlaying = true;
+    noteAudibleOutput('system_tts');
     const fallback = new SpeechSynthesisUtterance(text);
     fallback.lang = 'uk-UA';
     const systemVoice = window.speechSynthesis.getVoices().find(voice =>
@@ -1526,6 +1794,127 @@ if (speakIntroButton) speakIntroButton.onclick = async () => {
   }
 };
 
+async function announceSafetyProtocol(result) {
+  if (!result?.ok || !String(result.display_text || '').trim()) {
+    toast(result?.error || 'Протокол не має тексту для ефіру');
+    return false;
+  }
+  const text = result.display_text.trim();
+  $('#intro').textContent = `«${text}»`;
+  const musicWasPlaying = !!state.localAudio && !state.localAudio.paused;
+  await speak(text, musicWasPlaying);
+  if (musicWasPlaying && state.localAudio && !state.localAudio.paused) {
+    await fadeOutputVolume(programVolume(), 700);
+    state.ducked = false;
+  }
+  if (result.event_id && typeof window.pywebview?.api?.resolve_broadcast_event === 'function') {
+    await window.pywebview.api.resolve_broadcast_event(result.event_id, 'aired');
+  }
+  await refreshBroadcastSafety();
+  return true;
+}
+
+const correctionButton = $('#queueCorrection');
+if (correctionButton) correctionButton.onclick = async () => {
+  const original = window.prompt('Що саме прозвучало неточно?');
+  if (original === null) return;
+  const corrected = window.prompt('Яке формулювання є правильним?');
+  if (corrected === null) return;
+  const sourceTitle = window.prompt('Назва перевіреного джерела:');
+  if (sourceTitle === null) return;
+  const sourceUrl = window.prompt('Повний HTTP(S) URL джерела:');
+  if (sourceUrl === null) return;
+  const editor = window.prompt(
+    'Відповідальний редактор:',
+    state.settings.responsible_editor || '',
+  );
+  if (editor === null) return;
+  correctionButton.disabled = true;
+  try {
+    const result = await window.pywebview.api.queue_correction(
+      original,
+      corrected,
+      sourceUrl,
+      sourceTitle,
+      editor,
+    );
+    if (!result.ok) {
+      toast(result.error);
+      return;
+    }
+    state.emergencySegue = true;
+    await announceSafetyProtocol(result);
+    toast('Виправлення озвучено й зафіксовано');
+  } catch (error) {
+    toast(`Не вдалося поставити виправлення в ефір: ${error}`);
+  } finally {
+    correctionButton.disabled = false;
+  }
+};
+
+const technicalPauseButton = $('#technicalPause');
+if (technicalPauseButton) technicalPauseButton.onclick = async () => {
+  technicalPauseButton.disabled = true;
+  try {
+    const result = await window.pywebview.api.emergency_protocol('technical_pause', {
+      current_track_id: state.tracks[state.index]?.id || null,
+      responsible_editor: state.settings.responsible_editor || '',
+      initiated_by: 'operator',
+    });
+    state.emergencySegue = true;
+    await announceSafetyProtocol(result);
+  } catch (error) {
+    toast(`Не вдалося запустити технічний протокол: ${error}`);
+  } finally {
+    technicalPauseButton.disabled = false;
+  }
+};
+
+const apiFileInput = $('#apiFileInput');
+if (apiFileInput) apiFileInput.onchange = async event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const status = $('#apiImportStatus');
+  if (file.size > 65536) {
+    status.textContent = 'TXT завеликий. Максимальний розмір — 64 КБ.';
+    event.target.value = '';
+    return;
+  }
+  try {
+    $('#apiTextInput').value = await file.text();
+    status.textContent = `Завантажено ${file.name}. Натисніть «Перевірити й зберегти».`;
+  } catch (error) {
+    status.textContent = `Не вдалося прочитати TXT: ${error}`;
+  }
+  event.target.value = '';
+};
+
+const importApiButton = $('#importApiText');
+if (importApiButton) importApiButton.onclick = async () => {
+  const text = $('#apiTextInput').value;
+  const status = $('#apiImportStatus');
+  importApiButton.disabled = true;
+  status.textContent = 'Перевіряю формат ключів…';
+  try {
+    const result = await window.pywebview.api.import_api_text(text);
+    if (!result.ok) {
+      status.textContent = result.error;
+      toast('API TXT не пройшов перевірку');
+      return;
+    }
+    state.settings = result.settings || state.settings;
+    $('#apiTextInput').value = '';
+    const providers = (result.providers || []).join(', ');
+    status.textContent = `Збережено локально: ${providers}. Секрети приховано.`;
+    fillSettings();
+    toast('API-ключі збережено');
+  } catch (error) {
+    status.textContent = `Не вдалося зберегти API: ${error}`;
+  } finally {
+    importApiButton.disabled = false;
+  }
+};
+
 window.radioDiagnostics = () => ({
   bridge: !!window.pywebview?.api,
   tracks: state.tracks.length,
@@ -1566,6 +1955,15 @@ window.radioDiagnostics = () => ({
   radioBufferRefilling: !!state.radioQueue?.refilling,
   radioBufferTrackIds: (state.radioQueue?.items || []).map(track => track.id),
   radioBufferError: state.radioQueue?.last_error || '',
+  pilotClockVersion: state.pilotClock?.version || '',
+  pilotClockSlot: state.pilotClock?.current_slot_id || '',
+  hardPointAccuracy: state.pilotClock?.metrics?.hard_point_accuracy_percent ?? null,
+  watchdogState: state.watchdogState,
+  silenceWarnings: state.silenceWarnings,
+  silenceFallbacks: state.silenceFallbacks,
+  manualPause: state.manualPause,
+  emergencyRecoveryBusy: state.emergencyRecoveryBusy,
+  openCorrections: state.broadcastSafety?.open_corrections || 0,
   systemTts: 'speechSynthesis' in window,
 });
 
@@ -1578,6 +1976,8 @@ $('#saveSettings').onclick = async () => {
   try {
     const values = {};
     $$('[data-setting]').forEach(element => values[element.dataset.setting] = element.value);
+    const simpleStationPrompt = $('#simpleStationPrompt');
+    if (simpleStationPrompt) values.station_prompt = simpleStationPrompt.value;
     values.program_volume = state.settings.program_volume || $('#volume').value;
     const result = await window.pywebview.api.save_settings(values);
     $('#settingsLog').textContent = result.log || '';
@@ -1636,6 +2036,18 @@ setInterval(() => {
   $('#elapsed').textContent = `${Math.floor(current / 60)}:${String(Math.floor(current % 60)).padStart(2, '0')}`;
   $('#progress i').style.width = (duration && Number.isFinite(duration) ? current / duration * 100 : 0) + '%';
 }, 1000);
+
+setInterval(() => {
+  if (booted) void refreshPilotClock();
+}, 30000);
+
+setInterval(() => {
+  if (booted) checkSilenceWatchdog();
+}, 250);
+
+setInterval(() => {
+  if (booted) void refreshBroadcastSafety();
+}, 30000);
 
 let queueRefreshBusy = false;
 setInterval(async () => {

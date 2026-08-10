@@ -1,0 +1,13 @@
+# Local Ukrainian StyleTTS2 runtime. PyTorch CPU is installed separately from
+# the official PyTorch wheel index by the Windows installer.
+einops==0.8.1
+einops-exts==0.0.4
+huggingface-hub>=1.0,<2
+librosa>=0.11,<0.12
+marisa-trie>=1.2,<2
+munch>=4,<5
+pyyaml>=6,<7
+scipy>=1.11,<2
+six>=1.16,<2
+stanza==1.14.0
+transformers>=5,<6

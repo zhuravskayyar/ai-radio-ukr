@@ -1,16 +1,25 @@
 import json
 import random
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from backend.api import RadioAPI
+from backend.broadcast_safety import BroadcastSafety, PROTOCOL_VERSION
 from backend.content_planner import ContentPlan, ContentPlanner
 from backend.context_engine import ContextEngine
 from backend.db import Database
+from backend.host_brain import HostBrain
 from backend.music_knowledge import MusicKnowledgeBase
+from backend.pilot_clock import (
+    HARD_POINT_TOLERANCE_SECONDS,
+    PILOT_CLOCK_VERSION,
+    PilotClock,
+)
 from backend.speech_normalizer import normalize_linguistic
 from backend.transition_director import TransitionDirector
 from backend.voice_director import VoiceDirector
@@ -23,7 +32,7 @@ class ContextAndPlanningTests(unittest.TestCase):
             self.assertEqual(settings["rotation"], "random")
             self.assertEqual(settings["host_every"], "1")
             self.assertEqual(settings["talk_probability"], "100")
-            self.assertEqual(settings["host_name"], "Люмен")
+            self.assertEqual(settings["host_name"], "Адам Вектор")
             self.assertEqual(settings["silence_probability"], "0")
             self.assertEqual(settings["strict_live_ai_host"], "0")
             self.assertEqual(settings["story_probability"], "100")
@@ -42,6 +51,75 @@ class ContextAndPlanningTests(unittest.TestCase):
             self.assertEqual(settings["track_cooldown_tracks"], "200")
             self.assertEqual(settings["dynamic_discovery_enabled"], "1")
             self.assertEqual(settings["licensed_sources_confirmed"], "0")
+            self.assertEqual(settings["pilot_clock_enabled"], "1")
+            self.assertEqual(settings["responsible_editor"], "")
+            self.assertEqual(settings["silence_watchdog_enabled"], "1")
+            self.assertEqual(settings["silence_warning_seconds"], "3")
+            self.assertEqual(settings["silence_fallback_seconds"], "7")
+
+    def test_pilot_clock_is_one_exact_hour_with_valid_segments_and_hard_points(self):
+        clock = PilotClock()
+        rundown = clock.rundown("2026-08-04T08:22:00+03:00", "Ірина Редактор")
+        self.assertEqual(rundown["version"], PILOT_CLOCK_VERSION)
+        self.assertEqual(rundown["total_seconds"], 3600)
+        self.assertEqual(rundown["segment_count"], 12)
+        self.assertEqual(rundown["hard_points"], [":00", ":15", ":30", ":45"])
+        self.assertTrue(all(
+            180 <= segment["duration_seconds"] <= 420
+            for segment in rundown["segments"]
+        ))
+        self.assertEqual(
+            [segment["start_minute"] for segment in rundown["segments"]],
+            list(range(0, 60, 5)),
+        )
+        self.assertTrue(all(
+            segment["responsible_editor"] == "Ірина Редактор"
+            and segment["source_policy"]
+            and segment["fallback"]
+            and segment["forbidden_claims"]
+            for segment in rundown["segments"]
+        ))
+
+    def test_pilot_clock_measures_five_second_hard_point_tolerance(self):
+        clock = PilotClock()
+        on_time = clock.snapshot("2026-08-04T08:00:04+03:00")
+        late = clock.snapshot("2026-08-04T08:00:06+03:00")
+        story = clock.snapshot("2026-08-04T08:12:00+03:00")
+        self.assertEqual(on_time["segment"]["slot_id"], "hour_open")
+        self.assertTrue(on_time["hard_point_due"])
+        self.assertEqual(on_time["timing_error_seconds"], 4)
+        self.assertEqual(
+            on_time["segment"]["timing_tolerance_seconds"],
+            HARD_POINT_TOLERANCE_SECONDS,
+        )
+        self.assertFalse(late["hard_point_due"])
+        self.assertTrue(late["hard_point_missed"])
+        self.assertEqual(story["segment"]["slot_id"], "story_a")
+
+    def test_context_and_content_plan_carry_complete_rundown_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            db.save_settings({"responsible_editor": "Ірина Редактор"})
+            engine = ContextEngine(db)
+            context = engine.snapshot(
+                {"id": 1, "artist": "A", "energy": 4},
+                {"id": 2, "artist": "B", "energy": 7, "vocal_start_ms": 12000},
+                "2026-08-04T08:00:04+03:00",
+            )
+            plan = ContentPlanner(db).plan(context)
+            self.assertEqual(context["clock"]["version"], PILOT_CLOCK_VERSION)
+            self.assertEqual(plan.clock_slot_id, "hour_open")
+            self.assertEqual(plan.content_type, "top_of_hour")
+            self.assertTrue(plan.hard_point)
+            self.assertEqual(plan.timing_error_seconds, 4)
+            self.assertEqual(plan.responsible_editor, "Ірина Редактор")
+            self.assertEqual(plan.verification_status, "context_engine")
+            self.assertTrue(plan.thesis)
+            self.assertTrue(plan.source_policy)
+            self.assertTrue(plan.entry_cue)
+            self.assertTrue(plan.exit_cue)
+            self.assertTrue(plan.fallback)
+            self.assertTrue(plan.forbidden_claims)
 
     def test_existing_default_ai_token_limit_is_migrated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -55,6 +133,29 @@ class ContextAndPlanningTests(unittest.TestCase):
             migrated_db.save_settings({"ai_max_tokens": "320"})
             remigrated = Database(path).settings()
             self.assertEqual(remigrated["ai_max_tokens"], "1000")
+
+    def test_legacy_builtin_host_name_is_migrated_to_adam_vector(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "radio.db"
+            Database(path)
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute(
+                    "UPDATE settings SET value='Люмен' WHERE key='host_name'"
+                )
+                connection.execute("PRAGMA user_version=14")
+
+            migrated = Database(path).settings()
+            self.assertEqual(migrated["host_name"], "Адам Вектор")
+
+    def test_adam_vector_prompt_has_character_and_ai_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            prompt = HostBrain(db).persona_prompt()
+            self.assertIn("Адам Вектор", prompt)
+            self.assertIn("допитливість, точність і суха самоіронія", prompt)
+            self.assertIn("не прикидаєшся людиною", prompt)
+            self.assertIn("миттєво вимикаєш гумор і сарказм", prompt)
+            self.assertIn("редакційну відповідальність", prompt)
 
     def test_station_clock_is_pending_until_transition_is_aired(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -131,7 +232,7 @@ class ContextAndPlanningTests(unittest.TestCase):
             })
             self.assertEqual(plan.content_type, "talk")
 
-    def test_lumen_can_choose_a_deliberate_music_only_pause(self):
+    def test_adam_vector_can_choose_a_deliberate_music_only_pause(self):
         with tempfile.TemporaryDirectory() as directory:
             db = Database(Path(directory) / "radio.db")
             db.save_settings({
@@ -209,7 +310,11 @@ class ContextAndPlanningTests(unittest.TestCase):
                 {"artist": "A", "energy": 3, "mood": "cold"},
                 {"artist": "B", "energy": 9, "mood": "dark", "genre": "electronic"},
             )
-            self.assertEqual(context["personality"]["persona"]["name"], "Люмен")
+            persona = context["personality"]["persona"]
+            self.assertEqual(persona["name"], "Адам Вектор")
+            self.assertIn("цифровий", persona["identity"])
+            self.assertIn("точність", " ".join(persona["core_traits"]))
+            self.assertIn("виправлення помилки", persona["serious_mode"]["triggers"])
             self.assertEqual(context["session"]["phase"], "opening")
             self.assertEqual(context["music_transition"]["kind"], "high_energy")
             self.assertEqual(context["music_transition"]["next_genre"], "electronic")
@@ -405,6 +510,86 @@ class ContextAndPlanningTests(unittest.TestCase):
             self.assertIn("щойно зіграну", plan.directive)
 
 
+class BroadcastSafetyTests(unittest.TestCase):
+    def test_dead_air_protocol_is_deterministic_and_persisted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            safety = BroadcastSafety(db)
+            result = safety.protocol("dead_air", {"silent_seconds": 7.2})
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["version"], PROTOCOL_VERSION)
+            self.assertEqual(result["severity"], "critical")
+            self.assertTrue(result["automatic"])
+            self.assertIn("технічну паузу", result["display_text"])
+            events = db.broadcast_events()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["event_type"], "dead_air")
+            self.assertEqual(
+                json.loads(events[0]["details_json"])["silent_seconds"], 7.2,
+            )
+
+    def test_safety_alert_requires_official_source_and_editor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            safety = BroadcastSafety(db)
+            blocked = safety.protocol("safety_alert", {
+                "official_text": "Перейдіть в укриття.",
+                "source_url": "not-a-url",
+            })
+            self.assertFalse(blocked["ok"])
+            self.assertEqual(blocked["status"], "human_review_required")
+            self.assertEqual(db.broadcast_events(), [])
+
+            accepted = safety.protocol("safety_alert", {
+                "official_text": "Перейдіть в укриття.",
+                "source_url": "https://official.example/alert/42",
+                "responsible_editor": "Ірина Редактор",
+            })
+            self.assertTrue(accepted["ok"])
+            self.assertEqual(accepted["display_text"], "Перейдіть в укриття.")
+            self.assertEqual(len(db.broadcast_events()), 1)
+
+    def test_correction_requires_traceable_source_and_has_no_humor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            safety = BroadcastSafety(db)
+            blocked = safety.correction(
+                "Було 20 градусів", "Було 18 градусів", "", "Метеослужба", "",
+            )
+            self.assertFalse(blocked["ok"])
+            self.assertEqual(db.broadcast_events(), [])
+
+            accepted = safety.correction(
+                "Було 20 градусів",
+                "Було 18 градусів",
+                "https://weather.example/report",
+                "Офіційна метеослужба",
+                "Ірина Редактор",
+            )
+            self.assertTrue(accepted["ok"])
+            self.assertEqual(accepted["status"], "queued")
+            self.assertIn("Правильно: Було 18 градусів", accepted["display_text"])
+            self.assertNotIn("жарт", accepted["display_text"].casefold())
+            self.assertEqual(safety.status()["open_corrections"], 1)
+            db.resolve_broadcast_event(accepted["event_id"], "aired")
+            self.assertEqual(safety.status()["open_corrections"], 0)
+
+    def test_api_uses_configured_editor_for_correction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            api.db.save_settings({"responsible_editor": "Ірина Редактор"})
+            result = api.queue_correction(
+                "Неточна дата",
+                "Точна дата — 10 серпня",
+                "https://official.example/date",
+                "Офіційний календар",
+            )
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["responsible_editor"], "Ірина Редактор")
+            resolved = api.resolve_broadcast_event(result["event_id"], "aired")
+            self.assertEqual(resolved, {"ok": True, "status": "aired"})
+
+
 class VoiceAndTransitionTests(unittest.TestCase):
     def test_voice_director_keeps_three_text_layers(self):
         director = VoiceDirector()
@@ -501,6 +686,55 @@ class VoiceAndTransitionTests(unittest.TestCase):
 
 
 class PreparedTransitionTests(unittest.TestCase):
+    def test_prepared_and_aired_transition_is_logged_in_hour_rundown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            current, next_track = api.db.tracks()[0:2]
+            scheduled = "2026-08-04T08:00:04+03:00"
+            plan = ContentPlan(
+                content_type="liner",
+                style="straight_radio",
+                announce_mode="station_id",
+                target_seconds=4,
+                liner_text="Адам Вектор, цифровий ведучий LUMEN RADIO.",
+                clock_version=PILOT_CLOCK_VERSION,
+                clock_slot_id="hour_open",
+                clock_slot_name="Відкриття години",
+                hard_time="2026-08-04T08:00:00+03:00",
+                planned_start="2026-08-04T08:00:00+03:00",
+                planned_end="2026-08-04T08:05:00+03:00",
+                hard_point=True,
+                timing_tolerance_seconds=5,
+                timing_error_seconds=4,
+                thesis="Відкрити годину",
+                source_policy="Час лише з ContextEngine",
+                fallback="Перевірений liner",
+                forbidden_claims=["непідтверджені новини"],
+                responsible_editor="Ірина Редактор",
+            )
+            with patch.object(api.content_planner, "plan", return_value=plan), patch.object(
+                api, "_speech_asset", return_value={"ok": False, "error": "offline"}
+            ):
+                prepared = api.prepare_transition(
+                    current["id"], next_track["id"], scheduled, force=True,
+                )
+            self.assertTrue(prepared["ok"])
+            events = api.db.rundown_events("2026-08-04T08")
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["slot_id"], "hour_open")
+            self.assertEqual(events[0]["timing_status"], "planned")
+
+            api.mark_transition_aired(current["id"], next_track["id"])
+            rundown = api.pilot_hour(scheduled)
+            self.assertEqual(rundown["metrics"]["aired_events"], 1)
+            self.assertEqual(
+                rundown["segments"][0]["items"][0]["slot_id"], "hour_open"
+            )
+            self.assertIn(
+                rundown["segments"][0]["items"][0]["timing_status"],
+                {"on_time", "early", "late"},
+            )
+
     def test_live_transition_voices_local_fallback_by_default(self):
         with tempfile.TemporaryDirectory() as directory:
             api = RadioAPI(Path(directory))

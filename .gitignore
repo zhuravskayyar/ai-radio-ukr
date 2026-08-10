@@ -10,6 +10,16 @@ downloads/
 dist/
 build/
 *.spec
+packaging/get-pip.py
+packaging/tts-sources/*.zip
+packaging/assets/*.ico
+packaging/assets/*.exe
+packaging/test-install/
+packaging/test-install.log
+packaging/python-layout*/
+packaging/python-offline-layout/
+packaging/python-restore/
+packaging/python-3.11.9-amd64.exe
 api.txt
 apitest.txt
 radio.db

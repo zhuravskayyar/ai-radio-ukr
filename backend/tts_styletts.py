@@ -17,16 +17,19 @@ from pathlib import Path
 from unicodedata import normalize
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODEL_REPO = "patriotyk/styletts2_ukrainian_single"
 STYLE_REPO = "patriotyk/styletts2-ukrainian"
-MODEL_REVISION = "main"
-STYLE_REVISION = "main"
+# Pin the exact model snapshots used by the installer.  This prevents a future
+# upstream update from silently changing Adam Vector's voice.
+MODEL_REVISION = "2646553e1f9a8c832480e3ad5ccb6839245af584"
+STYLE_REVISION = "b02909e4c9f001865bf71633d76fee7110f657a3"
 SAMPLE_RATE = 24_000
-STANZA_RESOURCES_DIR = (
-    Path(__file__).resolve().parents[1] / "cache" / "stanza"
-)
+HF_HOME = PROJECT_ROOT / "cache" / "huggingface"
+STANZA_RESOURCES_DIR = PROJECT_ROOT / "cache" / "stanza"
 # ukrainian_word_stress imports stanza at module import time, so the writable
 # project-local resource directory must be selected before either is imported.
+os.environ.setdefault("HF_HOME", str(HF_HOME))
 os.environ.setdefault("STANZA_RESOURCES_DIR", str(STANZA_RESOURCES_DIR))
 
 _model = None

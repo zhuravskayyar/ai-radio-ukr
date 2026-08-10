@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .host_brain import HOST_PERSONA
+from .host_brain import build_host_persona
+from .pilot_clock import PilotClock
 
 
 WEATHER_LABELS = {
@@ -113,6 +114,7 @@ class ContextEngine:
     def __init__(self, db):
         self.db = db
         self.started_at = datetime.now(timezone.utc)
+        self.pilot_clock = PilotClock()
 
     @staticmethod
     def _session_phase(minutes_on_air):
@@ -290,6 +292,14 @@ class ContextEngine:
     def snapshot(self, current_track, next_track, scheduled_for=None):
         settings = self.db.settings()
         time_context = self.time_context(scheduled_for, settings)
+        clock = (
+            self.pilot_clock.snapshot(
+                time_context.iso,
+                settings.get("responsible_editor", "").strip(),
+            )
+            if str(settings.get("pilot_clock_enabled", "1")) == "1"
+            else {"enabled": False}
+        )
         weather = self.refresh_weather(settings)
         if weather.get("available"):
             local_clock = time_context.iso[:16]
@@ -320,6 +330,7 @@ class ContextEngine:
         recent_history = self.db.recent_history(12)
         return {
             "time": asdict(time_context),
+            "clock": clock,
             "weather": weather,
             "station": {
                 "name": settings.get("station_name", "LUMEN RADIO"),
@@ -327,7 +338,7 @@ class ContextEngine:
                 "city_locative": CITY_LOCATIVE.get(city, f"місті {city}"),
             },
             "personality": {
-                "persona": HOST_PERSONA,
+                "persona": build_host_persona(settings),
                 "language_style": settings.get("language_style", "casual_uk"),
                 "colloquiality": _float(settings, "colloquiality", 0.30),
                 "surzhyk": _float(settings, "surzhyk", 0.08),

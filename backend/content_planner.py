@@ -47,9 +47,9 @@ FORBIDDEN_CLICHES = (
 
 LINERS = (
     "LUMEN RADIO. Музика лишається.",
-    "Люмен не спить. LUMEN RADIO.",
+    "Адам Вектор, цифровий ведучий LUMEN RADIO.",
     "LUMEN RADIO. Без зайвого шуму.",
-    "Люмен у ефірі. Далі говорить музика.",
+    "Адам Вектор у ефірі. Далі говорить музика.",
 )
 
 GENERIC_STRUCTURE_WEIGHTS = {
@@ -116,6 +116,26 @@ class ContentPlan:
     reaction: str = ""
     rubric: str = ""
     session_phase: str = ""
+    clock_version: str = ""
+    clock_slot_id: str = ""
+    clock_slot_name: str = ""
+    hard_time: str = ""
+    planned_start: str = ""
+    planned_end: str = ""
+    hard_point: bool = False
+    timing_tolerance_seconds: int | None = None
+    timing_error_seconds: float | None = None
+    thesis: str = ""
+    source_policy: str = ""
+    verification_status: str = ""
+    pronunciation_notes: str = ""
+    entry_cue: str = ""
+    exit_cue: str = ""
+    cta: str = ""
+    fallback: str = ""
+    forbidden_claims: list[str] = field(default_factory=list)
+    responsible_editor: str = ""
+    preparation_mode: str = "prepared"
 
     def to_dict(self):
         return asdict(self)
@@ -196,6 +216,46 @@ class ContentPlanner:
         return "without_context"
 
     def plan(self, context, sequence_offset=0):
+        plan = self._plan_content(context, sequence_offset)
+        return self._attach_rundown(plan, context)
+
+    def _attach_rundown(self, plan, context):
+        clock = context.get("clock") or {}
+        segment = clock.get("segment") or {}
+        if not clock.get("enabled") or not segment:
+            return plan
+        plan.clock_version = str(clock.get("version") or "")
+        plan.clock_slot_id = str(segment.get("slot_id") or "")
+        plan.clock_slot_name = str(segment.get("name") or "")
+        plan.hard_time = str(segment.get("hard_time") or "")
+        plan.planned_start = str(segment.get("planned_start") or "")
+        plan.planned_end = str(segment.get("planned_end") or "")
+        plan.hard_point = bool(segment.get("hard_point"))
+        plan.timing_tolerance_seconds = segment.get("timing_tolerance_seconds")
+        plan.timing_error_seconds = clock.get("timing_error_seconds")
+        plan.thesis = str(segment.get("thesis") or plan.directive)
+        plan.source_policy = str(segment.get("source_policy") or "")
+        if plan.content_type == "story":
+            verification = (plan.story_source or {}).get("verification", {})
+            plan.verification_status = str(
+                verification.get("status") or "story_card_required"
+            )
+        elif plan.verified_fact:
+            plan.verification_status = "verified_fact"
+        elif plan.must_say_time or plan.may_say_weather:
+            plan.verification_status = "context_engine"
+        else:
+            plan.verification_status = "no_factual_claims"
+        plan.pronunciation_notes = str(segment.get("pronunciation") or "")
+        plan.entry_cue = str(segment.get("entry_cue") or "")
+        plan.exit_cue = str(segment.get("exit_cue") or "")
+        plan.cta = str(segment.get("cta") or "")
+        plan.fallback = str(segment.get("fallback") or "")
+        plan.forbidden_claims = list(segment.get("forbidden_claims") or [])
+        plan.responsible_editor = str(segment.get("responsible_editor") or "")
+        return plan
+
+    def _plan_content(self, context, sequence_offset=0):
         settings = self.db.settings()
         time = context["time"]
         weather = context.get("weather", {})
@@ -218,7 +278,98 @@ class ContentPlanner:
         if float(next_track.get("bpm") or 0) >= 140:
             target_seconds = min(target_seconds, 12.0)
 
-        if time.get("time_check_pending") and sequence_offset == 0:
+        clock = context.get("clock") or {}
+        clock_segment = clock.get("segment") or {}
+        pilot_clock_enabled = bool(clock.get("enabled") and clock_segment)
+        clock_slot_key = f"pilot_clock:{clock.get('slot_key', '')}"
+        if (
+            pilot_clock_enabled
+            and clock_segment.get("hard_point")
+            and sequence_offset == 0
+            and self._cooldown_ready(clock_slot_key, moment)
+        ):
+            focus = clock_segment.get("content_focus")
+            common = {
+                "target_seconds": min(target_seconds, 12.0),
+                "memory_keys": [clock_slot_key],
+                "reaction": reaction,
+                "session_phase": session_phase,
+            }
+            if focus == "identity_time":
+                return ContentPlan(
+                    content_type="top_of_hour",
+                    style="morning" if time["daypart"] == "morning" else "straight_radio",
+                    announce_mode="station_id",
+                    must_say_time=True,
+                    may_say_weather=False,
+                    directive=(
+                        "Hard point :00. Назви точний фактичний час, станцію та один раз прямо "
+                        "представ Адама Вектора як цифрового ведучого. Одразу вийди в музику."
+                    ),
+                    structure="station",
+                    mention_policy="artist_and_title",
+                    length_class="medium",
+                    **common,
+                )
+            if focus == "service":
+                may_weather = bool(weather.get("available"))
+                return ContentPlan(
+                    content_type="weather_touch" if may_weather else "top_of_hour",
+                    style="atmospheric" if may_weather else "straight_radio",
+                    announce_mode="forward",
+                    must_say_time=True,
+                    may_say_weather=may_weather,
+                    directive=(
+                        "Hard point :15. Назви точний фактичний час і додай лише одну передану "
+                        "практичну деталь погоди; якщо її немає, одразу повернися до музики."
+                    ),
+                    memory_keys=[clock_slot_key] + (["weather"] if may_weather else []),
+                    structure="announce",
+                    mention_policy="artist_and_title",
+                    length_class="medium",
+                    target_seconds=common["target_seconds"],
+                    reaction=reaction,
+                    session_phase=session_phase,
+                )
+            if focus == "listener":
+                return ContentPlan(
+                    content_type="mood_check",
+                    style="listener_tease",
+                    announce_mode="forward",
+                    directive=(
+                        "Hard point :30. Дай одну пряму думку про настрій ефіру. "
+                        "Не проси відповіді, доки немає каналу модерації."
+                    ),
+                    structure="listener",
+                    mention_policy="artist_and_title",
+                    length_class="medium",
+                    word_min=12,
+                    word_max=28,
+                    **common,
+                )
+            if focus == "station_id":
+                return ContentPlan(
+                    content_type="liner",
+                    style="straight_radio",
+                    announce_mode="station_id",
+                    target_seconds=4,
+                    liner_text="Адам Вектор, цифровий ведучий LUMEN RADIO.",
+                    directive="Hard point :45. Короткий перевірений station ID і негайний вихід у музику.",
+                    memory_keys=[clock_slot_key],
+                    structure="station",
+                    mention_policy="implicit",
+                    length_class="short",
+                    word_min=4,
+                    word_max=8,
+                    reaction=reaction,
+                    session_phase=session_phase,
+                )
+
+        if (
+            not pilot_clock_enabled
+            and time.get("time_check_pending")
+            and sequence_offset == 0
+        ):
             may_weather = bool(weather.get("available")) and self._cooldown_ready("weather", moment)
             return ContentPlan(
                 content_type="top_of_hour",
@@ -231,7 +382,7 @@ class ContentPlanner:
                 memory_keys=["last_time_check"] + (["weather"] if may_weather else []),
             )
 
-        radio_slot = time.get("radio_clock_slot", "")
+        radio_slot = "" if pilot_clock_enabled else time.get("radio_clock_slot", "")
         slot_key = f"radio_clock:{time.get('date', '')}:{time.get('hour', '')}:{radio_slot}"
         if radio_slot == ":15" and weather.get("available") and self._cooldown_ready("weather", moment) and sequence_offset == 0:
             return ContentPlan(
@@ -466,7 +617,7 @@ class ContentPlanner:
                 style="straight_radio",
                 announce_mode="none",
                 target_seconds=0,
-                directive="Люмен свідомо мовчить: чистий музичний перехід.",
+                directive="Адам Вектор свідомо мовчить: чистий музичний перехід.",
                 structure="silence",
                 mention_policy="implicit",
                 length_class="silent",

@@ -169,7 +169,7 @@ server = ThreadingHTTPServer(
 )
 threading.Thread(target=server.serve_forever, daemon=True).start()
 url = f"http://127.0.0.1:{server.server_port}/ui/index.html"
-window = webview.create_window("LUMEN smoke test", url, js_api=api)
+window = webview.create_window("Vector Radio smoke test", url, js_api=api)
 finished = threading.Event()
 failures = []
 
@@ -203,22 +203,57 @@ def verify():
           title: document.querySelector('#nowTitle').textContent,
           artist: document.querySelector('#nowArtist').textContent,
           queue: document.querySelectorAll('#queue .queueItem').length,
+          rundown: document.querySelectorAll('#rundown .rundown-item').length,
+          hardPoints: document.querySelectorAll('#rundown .rundown-item.hard').length,
+          currentClockSlots: document.querySelectorAll('#rundown .rundown-item.current').length,
+          rundownMeta: document.querySelector('#rundownMeta').textContent,
+          safetyStatus: document.querySelector('#safetyStatus').textContent,
+          vectorLogoVisible: document.querySelector('.vector-logo').getBoundingClientRect().width > 100,
+          centralPlayVisible: document.querySelector('#play').getBoundingClientRect().width > 60,
+          settingsGearVisible: document.querySelector('.settings-gear').getBoundingClientRect().width > 20,
           diagnostics: window.radioDiagnostics()
         }))()""")
-        print("during_intro", json.dumps(during_intro, ensure_ascii=False), flush=True)
+        print("during_intro", json.dumps(during_intro, ensure_ascii=True), flush=True)
         after_intro = wait_for_diagnostics(
             lambda value: value["automationBusy"] is False
             and value["ducked"] is False
             and value["currentOutputVolume"] == 75,
         )
-        print("after_intro", json.dumps(after_intro, ensure_ascii=False), flush=True)
+        print("after_intro", json.dumps(after_intro, ensure_ascii=True), flush=True)
         first_track_id = after_intro["currentTrackId"]
         window.evaluate_js("void handleTrackEnded(); true")
         after_transition = wait_for_diagnostics(
             lambda value: value["currentTrackId"] != first_track_id
             and value["localPlaying"] is True,
         )
-        print("after_transition", json.dumps(after_transition, ensure_ascii=False), flush=True)
+        print("after_transition", json.dumps(after_transition, ensure_ascii=True), flush=True)
+        wait_for_diagnostics(
+            lambda value: value["automationBusy"] is False
+            and value["localPlaying"] is True,
+        )
+        window.evaluate_js("""(() => {
+          state.localAudio.pause();
+          state.manualPause = false;
+          state.broadcastStarted = true;
+          state.lastAudibleAt = Date.now() - 8000;
+          return true;
+        })()""")
+        after_watchdog = wait_for_diagnostics(
+            lambda value: value["silenceWarnings"] >= 1
+            and value["silenceFallbacks"] >= 1
+            and value["emergencyRecoveryBusy"] is False
+            and value["localPlaying"] is True,
+        )
+        print("after_watchdog", json.dumps(after_watchdog, ensure_ascii=True), flush=True)
+        watchdog_counts = (
+            after_watchdog["silenceWarnings"], after_watchdog["silenceFallbacks"],
+        )
+        manual_pause = window.evaluate_js("""(() => {
+          pauseBroadcast();
+          state.lastAudibleAt = Date.now() - 30000;
+          checkSilenceWatchdog();
+          return window.radioDiagnostics();
+        })()""")
         window.evaluate_js("document.querySelector('[data-page=\"library\"]').click()")
         time.sleep(1)
         library = window.evaluate_js("""(() => ({
@@ -230,15 +265,36 @@ def verify():
             .filter(node => node.textContent.includes('STORY · 1×2')).length,
           refreshLabel: document.querySelector('#refreshAiLibrary').textContent
         }))()""")
+        window.evaluate_js("document.querySelector('.settings-gear').click()")
+        time.sleep(0.5)
+        simple_settings = window.evaluate_js("""(() => ({
+          active: document.querySelector('#settings').classList.contains('active'),
+          apiInputVisible: document.querySelector('#apiTextInput').getBoundingClientRect().height > 40,
+          apiFileButtonVisible: document.querySelector('.file-button').getBoundingClientRect().height > 20,
+          genreVisible: document.querySelector('#simpleStationPrompt').getBoundingClientRect().height > 40,
+          visibleCards: [...document.querySelectorAll('#settings .settingsGrid > article')]
+            .filter(node => getComputedStyle(node).display !== 'none').length
+        }))()""")
         result = {
             "during_intro": during_intro,
             "after_intro": after_intro,
             "after_transition": after_transition,
+            "after_watchdog": after_watchdog,
+            "manual_pause": manual_pause,
             "library": library,
+            "simple_settings": simple_settings,
         }
         print(json.dumps(result, ensure_ascii=True), flush=True)
         assert intro_diagnostics["localTracks"] == 12
         assert during_intro["queue"] == 9
+        assert during_intro["rundown"] == 12
+        assert during_intro["hardPoints"] == 4
+        assert during_intro["currentClockSlots"] == 1
+        assert "2026.08-pilot-v1" in during_intro["rundownMeta"]
+        assert "Watchdog 3/7" in during_intro["safetyStatus"]
+        assert during_intro["vectorLogoVisible"] is True
+        assert during_intro["centralPlayVisible"] is True
+        assert during_intro["settingsGearVisible"] is True
         assert intro_diagnostics["radioBufferSize"] == 10
         assert intro_diagnostics["radioBufferTarget"] == 10
         assert intro_diagnostics["localPlaying"] is True
@@ -249,6 +305,9 @@ def verify():
         assert after_intro["localPlaying"] is True
         assert after_intro["ducked"] is False
         assert after_intro["currentOutputVolume"] == 75
+        assert after_intro["watchdogState"] == "armed"
+        assert after_intro["silenceWarnings"] == 0
+        assert after_intro["silenceFallbacks"] == 0
         assert after_intro["rotation"] == "random"
         assert len(after_intro["scheduledTrackIds"]) == len(set(after_intro["scheduledTrackIds"]))
         assert first_track_id not in after_intro["scheduledTrackIds"]
@@ -263,9 +322,22 @@ def verify():
         assert len(after_transition["radioBufferTrackIds"]) == len(
             set(after_transition["radioBufferTrackIds"])
         )
+        assert after_watchdog["watchdogState"] == "armed"
+        assert after_watchdog["silenceWarnings"] >= 1
+        assert after_watchdog["silenceFallbacks"] >= 1
+        assert after_watchdog["localPlaying"] is True
+        assert manual_pause["watchdogState"] == "paused"
+        assert manual_pause["manualPause"] is True
+        assert manual_pause["silenceWarnings"] == watchdog_counts[0]
+        assert manual_pause["silenceFallbacks"] == watchdog_counts[1]
         assert library["active"] is True
         assert library["refreshLabel"] == "↻ Оновити AI-бібліотеку"
         assert library["corroboratedStoryBadges"] >= 1
+        assert simple_settings["active"] is True
+        assert simple_settings["apiInputVisible"] is True
+        assert simple_settings["apiFileButtonVisible"] is True
+        assert simple_settings["genreVisible"] is True
+        assert simple_settings["visibleCards"] == 1
     except BaseException as exc:
         failures.append(exc)
         raise

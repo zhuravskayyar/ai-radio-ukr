@@ -26,9 +26,14 @@ def _auto_pronunciation_values(artist, title):
 
 DEFAULTS = {
     "station_name": "LUMEN RADIO",
-    "host_name": "Люмен",
+    "host_name": "Адам Вектор",
     "station_city": "Київ",
     "station_timezone": "Europe/Kyiv",
+    "pilot_clock_enabled": "1",
+    "responsible_editor": "",
+    "silence_watchdog_enabled": "1",
+    "silence_warning_seconds": "3",
+    "silence_fallback_seconds": "7",
     "chart_name": "Play Together",
     "rotation": "random",
     "host_every": "1",
@@ -270,6 +275,35 @@ class Database:
                     artist TEXT NOT NULL DEFAULT '',
                     title TEXT NOT NULL DEFAULT '',
                     played_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS rundown_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clock_version TEXT NOT NULL DEFAULT '',
+                    hour_key TEXT NOT NULL DEFAULT '',
+                    slot_id TEXT NOT NULL DEFAULT '',
+                    hard_time TEXT NOT NULL DEFAULT '',
+                    planned_for TEXT NOT NULL DEFAULT '',
+                    aired_at TEXT NOT NULL DEFAULT '',
+                    timing_error_seconds REAL,
+                    timing_status TEXT NOT NULL DEFAULT 'planned',
+                    current_track_id INTEGER,
+                    next_track_id INTEGER,
+                    content_type TEXT NOT NULL DEFAULT '',
+                    responsible_editor TEXT NOT NULL DEFAULT '',
+                    plan_json TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(current_track_id,next_track_id,planned_for)
+                );
+                CREATE TABLE IF NOT EXISTS broadcast_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'info',
+                    status TEXT NOT NULL DEFAULT 'observed',
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    script_text TEXT NOT NULL DEFAULT '',
+                    source_url TEXT NOT NULL DEFAULT '',
+                    responsible_editor TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT NOT NULL DEFAULT ''
                 );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(tracks)")}
@@ -524,6 +558,52 @@ class Database:
                     )
                 db.execute("DELETE FROM transitions")
                 db.execute("PRAGMA user_version=14")
+            if schema_version < 15:
+                # Replace legacy built-in host names with the researched Adam
+                # Vector persona. Explicit custom names remain untouched.
+                db.execute(
+                    "UPDATE settings SET value='Адам Вектор' "
+                    "WHERE key='host_name' AND value IN ('Люмен','Остап','Марта','')"
+                )
+                db.execute("DELETE FROM transitions")
+                db.execute("PRAGMA user_version=15")
+            if schema_version < 16:
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS rundown_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clock_version TEXT NOT NULL DEFAULT '',
+                    hour_key TEXT NOT NULL DEFAULT '',
+                    slot_id TEXT NOT NULL DEFAULT '',
+                    hard_time TEXT NOT NULL DEFAULT '',
+                    planned_for TEXT NOT NULL DEFAULT '',
+                    aired_at TEXT NOT NULL DEFAULT '',
+                    timing_error_seconds REAL,
+                    timing_status TEXT NOT NULL DEFAULT 'planned',
+                    current_track_id INTEGER,
+                    next_track_id INTEGER,
+                    content_type TEXT NOT NULL DEFAULT '',
+                    responsible_editor TEXT NOT NULL DEFAULT '',
+                    plan_json TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(current_track_id,next_track_id,planned_for)
+                    )"""
+                )
+                db.execute("PRAGMA user_version=16")
+            if schema_version < 17:
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS broadcast_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'info',
+                    status TEXT NOT NULL DEFAULT 'observed',
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    script_text TEXT NOT NULL DEFAULT '',
+                    source_url TEXT NOT NULL DEFAULT '',
+                    responsible_editor TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT NOT NULL DEFAULT ''
+                    )"""
+                )
+                db.execute("PRAGMA user_version=17")
             db.execute(
                 "UPDATE settings SET value=? "
                 "WHERE key='ai_max_tokens' AND value IN ('160','220','320','360')",
@@ -544,7 +624,6 @@ class Database:
             db.execute(
                 "UPDATE settings SET value='12' WHERE key='rubric_probability' AND value IN ('6')"
             )
-            db.execute("UPDATE settings SET value='Остап' WHERE key='host_name' AND value='Марта'")
             db.execute(
                 "UPDATE settings SET value=? WHERE key='nvidia_model' AND value=?",
                 (DEFAULTS["nvidia_model"], "qwen/qwen3-next-80b-a3b-instruct"),
@@ -885,6 +964,86 @@ class Database:
                 (current_track_id, next_track_id),
             ).fetchone()
             return dict(row) if row else None
+
+    def save_rundown_event(self, values):
+        allowed = {
+            "clock_version", "hour_key", "slot_id", "hard_time",
+            "planned_for", "aired_at", "timing_error_seconds", "timing_status",
+            "current_track_id", "next_track_id", "content_type",
+            "responsible_editor", "plan_json",
+        }
+        payload = {key: value for key, value in values.items() if key in allowed}
+        required = ("current_track_id", "next_track_id", "planned_for")
+        if any(payload.get(key) in (None, "") for key in required):
+            raise ValueError("Rundown event requires track pair and planned time")
+        columns = list(payload)
+        updates = ",".join(
+            f"{column}=excluded.{column}" for column in columns
+            if column not in required
+        )
+        with closing(self.connect()) as db, db:
+            db.execute(
+                f"""INSERT INTO rundown_events({','.join(columns)})
+                VALUES({','.join('?' for _ in columns)})
+                ON CONFLICT(current_track_id,next_track_id,planned_for)
+                DO UPDATE SET {updates}""",
+                [payload[column] for column in columns],
+            )
+
+    def mark_rundown_aired(
+        self, current_track_id, next_track_id, planned_for, aired_at,
+        timing_error_seconds=None, timing_status="aired",
+    ):
+        with closing(self.connect()) as db, db:
+            db.execute(
+                """UPDATE rundown_events SET aired_at=?,timing_error_seconds=?,
+                timing_status=? WHERE current_track_id=? AND next_track_id=?
+                AND planned_for=?""",
+                (
+                    aired_at, timing_error_seconds, timing_status,
+                    int(current_track_id), int(next_track_id), planned_for,
+                ),
+            )
+
+    def rundown_events(self, hour_key=""):
+        query = "SELECT * FROM rundown_events"
+        params = []
+        if hour_key:
+            query += " WHERE hour_key=?"
+            params.append(hour_key)
+        query += " ORDER BY planned_for,id"
+        with closing(self.connect()) as db, db:
+            return [dict(row) for row in db.execute(query, params)]
+
+    def add_broadcast_event(self, values):
+        columns = (
+            "event_type", "severity", "status", "details_json", "script_text",
+            "source_url", "responsible_editor", "created_at", "resolved_at",
+        )
+        payload = {column: values.get(column, "") for column in columns}
+        with closing(self.connect()) as db, db:
+            cursor = db.execute(
+                f"INSERT INTO broadcast_events({','.join(columns)}) "
+                f"VALUES({','.join('?' for _ in columns)})",
+                [payload[column] for column in columns],
+            )
+            return cursor.lastrowid
+
+    def broadcast_events(self, limit=50):
+        with closing(self.connect()) as db, db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM broadcast_events ORDER BY id DESC LIMIT ?",
+                    (max(1, int(limit)),),
+                )
+            ]
+
+    def resolve_broadcast_event(self, event_id, status="resolved", resolved_at=""):
+        with closing(self.connect()) as db, db:
+            db.execute(
+                "UPDATE broadcast_events SET status=?,resolved_at=? WHERE id=?",
+                (status, resolved_at, int(event_id)),
+            )
 
     def save_transition(self, values):
         allowed = {

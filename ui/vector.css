@@ -1,0 +1,410 @@
+:root {
+  --vector-bg: #050607;
+  --vector-panel: #0d0f12;
+  --vector-line: #252a31;
+  --vector-text: #f7f7f4;
+  --vector-muted: #969ca5;
+  --vector-yellow: #ffd21c;
+  --vector-yellow-soft: rgba(255, 210, 28, .18);
+}
+
+html,
+body.vector-ui {
+  min-width: 0;
+  background: var(--vector-bg);
+  color: var(--vector-text);
+}
+
+body.vector-ui {
+  padding: 0;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(255, 255, 255, .055), transparent 35%),
+    linear-gradient(180deg, #080a0d 0%, #030405 100%);
+}
+
+.vector-ui .app {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.vector-ui .app::before {
+  opacity: .16;
+  mix-blend-mode: screen;
+  background-image:
+    linear-gradient(115deg, transparent 0 46%, rgba(255, 210, 28, .05) 46.2% 46.8%, transparent 47%),
+    repeating-linear-gradient(0deg, transparent 0 4px, rgba(255, 255, 255, .015) 5px, transparent 6px);
+}
+
+.vector-ui .topbar {
+  height: 74px;
+  padding: 10px clamp(18px, 4vw, 54px);
+  border: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .72), transparent);
+  z-index: 10;
+}
+
+.vector-ui .brand {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--vector-text);
+  padding: 0;
+  cursor: pointer;
+}
+
+.vector-ui .brand img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.vector-ui .brand-text {
+  color: var(--vector-text);
+  letter-spacing: .08em;
+  font-size: 18px;
+}
+
+.vector-ui .brand-text span {
+  color: var(--vector-yellow);
+  letter-spacing: .34em;
+  font-size: 8px;
+}
+
+.vector-ui .settings-gear {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vector-text);
+  font-size: 27px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.vector-ui .settings-gear:hover,
+.vector-ui .settings-gear.active {
+  color: var(--vector-yellow);
+  border-color: var(--vector-yellow);
+  transform: rotate(20deg);
+}
+
+.vector-ui .layout {
+  display: block;
+  min-height: 0;
+}
+
+.vector-ui .menu {
+  display: none;
+}
+
+.vector-ui .content {
+  height: 100%;
+  padding: 0 clamp(18px, 4vw, 54px) 28px;
+}
+
+.vector-ui #onair.page.active {
+  display: block;
+  height: 100%;
+}
+
+.vector-ui .hero {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: clamp(8px, 2vh, 24px) 18px 18px;
+  overflow-y: auto;
+  border: 0;
+  background: transparent;
+}
+
+.vector-ui .hero-main {
+  width: min(760px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.2vh, 25px);
+  text-align: center;
+}
+
+.vector-ui .vector-logo {
+  display: block;
+  order: 1;
+  width: min(610px, 77vw);
+  max-height: 34vh;
+  object-fit: contain;
+  filter: drop-shadow(0 20px 48px rgba(0, 0, 0, .64));
+}
+
+.vector-ui .eyebrow,
+.vector-ui .sub,
+.vector-ui .hero-side,
+.vector-ui .studio-grid,
+.vector-ui .rundown-panel {
+  display: none !important;
+}
+
+.vector-ui .player-panel {
+  order: 2;
+  width: min(540px, 92vw);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.vector-ui .player-controls {
+  order: 1;
+}
+
+.vector-ui .player-controls #prev,
+.vector-ui .player-controls #next,
+.vector-ui .player-meta {
+  display: none;
+}
+
+.vector-ui .player-controls .round.play {
+  width: clamp(88px, 13vh, 122px);
+  height: clamp(88px, 13vh, 122px);
+  border: 4px solid var(--vector-yellow);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .55);
+  color: var(--vector-yellow);
+  box-shadow: 0 0 0 9px rgba(255, 210, 28, .04), 0 0 46px rgba(255, 210, 28, .14);
+  font-size: clamp(30px, 5vh, 46px);
+  padding-left: 7px;
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+}
+
+.vector-ui .player-controls .round.play:hover {
+  transform: scale(1.045);
+  background: var(--vector-yellow);
+  color: #08090a;
+  box-shadow: 0 0 58px rgba(255, 210, 28, .27);
+}
+
+.vector-ui .progress {
+  order: 2;
+  width: min(470px, 78vw);
+  height: 28px;
+  border: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5px, rgba(255, 210, 28, .35) 5px 8px, transparent 8px 12px);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  overflow: hidden;
+}
+
+.vector-ui .progress i {
+  height: 100%;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5px, var(--vector-yellow) 5px 8px, transparent 8px 12px);
+  box-shadow: none;
+}
+
+.vector-ui .play-info {
+  order: 3;
+  width: min(720px, 94vw);
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.vector-ui .play-info .label {
+  color: var(--vector-yellow);
+  font-size: 12px;
+  letter-spacing: .24em;
+}
+
+.vector-ui .play-info .track {
+  margin-top: 10px;
+  color: var(--vector-text);
+  font-size: clamp(24px, 4vw, 46px);
+  font-weight: 900;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.vector-ui .play-info .meta {
+  margin-top: 8px;
+  color: var(--vector-muted);
+  font-size: clamp(14px, 2vw, 20px);
+  font-weight: 700;
+}
+
+.vector-ui #settings.page.active {
+  display: flex;
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: 20px 0 36px;
+}
+
+.vector-ui #settings .pageHeader {
+  align-items: flex-start;
+}
+
+.vector-ui #settings .pageHeader small,
+.vector-ui #settings .pageHeader h2,
+.vector-ui #settings .pageHeader p,
+.vector-ui #settings .settingsSaveBox {
+  color: var(--vector-text);
+}
+
+.vector-ui #settings .pageHeader small {
+  color: var(--vector-yellow);
+}
+
+.vector-ui #settings .settingsSaveBox .primary {
+  border-color: var(--vector-yellow) !important;
+  background: var(--vector-yellow) !important;
+  color: #090a0b !important;
+  box-shadow: none !important;
+}
+
+.vector-ui .settingsGrid {
+  display: block;
+  padding: 3px 4px 24px;
+}
+
+.vector-ui .settingsGrid > article:not(.simple-settings-card) {
+  display: none !important;
+}
+
+.vector-ui .settingsGrid .simple-settings-card {
+  display: block;
+  padding: clamp(20px, 4vw, 34px);
+  border: 1px solid var(--vector-line);
+  border-radius: 22px;
+  background: rgba(13, 15, 18, .93);
+  color: var(--vector-text);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, .34);
+}
+
+.vector-ui .simple-settings-card h3 {
+  margin: 0 0 12px;
+  color: var(--vector-text);
+  font-size: 16px;
+  letter-spacing: .08em;
+}
+
+.vector-ui .simple-settings-card h3:not(:first-child) {
+  margin-top: 30px;
+  padding-top: 28px;
+  border-top: 1px solid var(--vector-line);
+}
+
+.vector-ui .settingsGrid .simple-settings-card label,
+.vector-ui .settingsGrid .simple-settings-card .hint {
+  color: var(--vector-muted);
+}
+
+.vector-ui .settingsGrid .simple-settings-card textarea {
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid var(--vector-line);
+  border-radius: 12px;
+  background: #070809;
+  color: var(--vector-text);
+  font: 13px/1.55 Consolas, 'Cascadia Mono', monospace;
+  caret-color: var(--vector-yellow);
+}
+
+.vector-ui .settingsGrid .simple-settings-card textarea:focus {
+  border-color: var(--vector-yellow);
+  box-shadow: 0 0 0 3px var(--vector-yellow-soft);
+}
+
+.vector-ui .simple-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.vector-ui .simple-actions button,
+.vector-ui .file-button {
+  min-height: 42px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  margin: 0 !important;
+  padding: 0 16px;
+  border: 1px solid var(--vector-yellow);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vector-yellow) !important;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+  cursor: pointer;
+}
+
+.vector-ui .simple-actions #importApiText {
+  background: var(--vector-yellow);
+  color: #08090a !important;
+}
+
+.vector-ui .api-help {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--vector-line);
+  border-radius: 12px;
+  color: var(--vector-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.vector-ui .api-help summary {
+  color: var(--vector-text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.vector-ui .api-help a {
+  color: var(--vector-yellow);
+}
+
+.vector-ui .api-help pre {
+  overflow-x: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #050607;
+  color: var(--vector-text);
+}
+
+.vector-ui #toast {
+  border: 1px solid var(--vector-yellow);
+  border-radius: 12px;
+  background: #0b0d0f;
+  color: var(--vector-text);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .48);
+}
+
+@media (max-height: 720px) {
+  .vector-ui .vector-logo { max-height: 27vh; }
+  .vector-ui .hero-main { gap: 10px; }
+  .vector-ui .player-controls .round.play { width: 82px; height: 82px; }
+}
+
+@media (max-width: 640px) {
+  .vector-ui .topbar { padding-inline: 16px; }
+  .vector-ui .brand-text { display: none; }
+  .vector-ui .content { padding-inline: 8px; }
+  .vector-ui .hero { padding-inline: 0; }
+  .vector-ui #settings .pageHeader { padding-inline: 8px; }
+  .vector-ui #settings .pageHeader h2 { font-size: 22px; }
+  .vector-ui #settings .settingsSaveBox { align-self: flex-start; }
+}

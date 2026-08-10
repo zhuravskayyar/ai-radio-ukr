@@ -1,15 +1,15 @@
 <!doctype html>
 <html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lumen Radio</title><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"></head>
-<body>
+<title>Vector Radio</title><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"><link rel="stylesheet" href="vector.css?v=auto"></head>
+<body class="vector-ui">
 <div class="app">
   <header class="topbar">
-    <div class="brand">
-      <div class="mark">L</div>
-      <div class="brand-text">LUMEN<span>AI RADIO</span></div>
-    </div>
+    <button class="brand nav active" data-page="onair" aria-label="Головний екран">
+      <img src="assets/vector-radio-logo.png" alt="Vector Radio">
+      <span class="brand-text">VECTOR<span>RADIO</span></span>
+    </button>
     <div class="top-actions">
-      <button class="livebtn"><span></span> LIVE</button>
+      <button class="nav settings-gear" data-page="settings" aria-label="Налаштування" title="Налаштування">⚙</button>
     </div>
   </header>
 
@@ -30,6 +30,7 @@
       <section id="onair" class="page active">
         <div class="hero">
           <div class="hero-main">
+            <img class="vector-logo" src="assets/vector-radio-logo.png" alt="Vector Radio">
             <div class="eyebrow">NOW PLAYING</div>
             <div class="play-info">
               <div class="label">Зараз в ефірі</div>
@@ -59,6 +60,7 @@
                 <li>● Queue prepared <span id="statusQueueCount">0</span> tracks</li>
                 <li>● Story generated</li>
                 <li>● Weather connected</li>
+                <li id="safetyStatus">● Watchdog armed</li>
               </ul>
             </div>
           </div>
@@ -76,9 +78,22 @@
             <div class="quick">
               <button id="generate">✦ Нова підводка</button>
               <button id="shuffle">→ Skip segment</button>
+              <button id="queueCorrection">! Виправлення</button>
+              <button id="technicalPause">⚠ Техпауза</button>
             </div>
           </section>
         </div>
+
+        <section class="panel rundown-panel">
+          <div class="rundown-head">
+            <div>
+              <h3>Пілотна година · Rundown</h3>
+              <p id="rundownMeta" class="hint">Завантажую ефірний годинник…</p>
+            </div>
+            <strong id="rundownAccuracy">HARD —</strong>
+          </div>
+          <div id="rundown" class="rundown-grid"></div>
+        </section>
       </section>
 
       <section id="library" class="page">
@@ -100,8 +115,9 @@
       <section id="settings" class="page">
         <div class="pageHeader">
           <div>
-            <small>КОНФІГУРАЦІЯ</small>
+            <small>VECTOR RADIO</small>
             <h2>Налаштування</h2>
+            <p class="hint">Лише ключі AI та музичний стиль станції.</p>
           </div>
           <div class="settingsSaveBox">
             <pre id="settingsLog" class="hint"></pre>
@@ -109,6 +125,31 @@
           </div>
         </div>
         <div class="settingsGrid">
+          <article class="simple-settings-card">
+            <h3>API-ключі</h3>
+            <p class="hint">Вставте вміст TXT або виберіть файл. Потрібен хоча б один ключ: NVIDIA чи OpenRouter.</p>
+            <textarea id="apiTextInput" rows="5" spellcheck="false" placeholder="NVIDIA_API_KEY=nvapi-...&#10;OPENROUTER_API_KEY=sk-or-v1-..."></textarea>
+            <div class="simple-actions">
+              <label class="file-button" for="apiFileInput">Вибрати TXT</label>
+              <input id="apiFileInput" type="file" accept=".txt,text/plain" hidden>
+              <button id="importApiText" type="button">Перевірити й зберегти</button>
+            </div>
+            <p id="apiImportStatus" class="hint">Ключі зберігаються локально й не показуються повторно.</p>
+            <details class="api-help">
+              <summary>Де взяти API-ключі та який формат TXT?</summary>
+              <p><a href="https://build.nvidia.com/" target="_blank" rel="noreferrer">NVIDIA API Catalog</a>: оберіть модель → <b>Get API Key</b>.</p>
+              <p><a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer">OpenRouter Keys</a>: створіть звичайний API key для completions.</p>
+              <pre>NVIDIA_API_KEY=nvapi-ваш_ключ
+OPENROUTER_API_KEY=sk-or-v1-ваш_ключ</pre>
+              <p>Можна залишити лише один рядок. Не додавайте цей TXT до Git.</p>
+            </details>
+
+            <h3>Стиль радіо</h3>
+            <label>Жанр, епоха й настрій
+              <textarea id="simpleStationPrompt" rows="5" placeholder="Наприклад: сучасний український alternative rock, енергійно, без попси й каверів"></textarea>
+            </label>
+            <p class="hint">Після зміни стилю AI-бібліотека перебудується; особистість ведучого Адама Вектора не змінюється.</p>
+          </article>
           <article>
             <h3>Радіостанція</h3>
             <label>Назва<input data-setting="station_name"></label>

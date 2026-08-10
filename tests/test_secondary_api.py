@@ -20,6 +20,53 @@ from backend.api import (
 
 
 class SecondaryApiTests(unittest.TestCase):
+    def test_api_txt_import_validates_stores_and_masks_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            nvidia = "nvapi-1234567890abcdefghijkl"
+            openrouter = "sk-or-v1-1234567890abcdefghijkl"
+            youtube = "AIza1234567890abcdefghijklmnop"
+            result = api.import_api_text(
+                f"NVIDIA_API_KEY={nvidia}\n"
+                f"OPENROUTER_API_KEY={openrouter}\n"
+                f"YOUTUBE_API_KEY={youtube}\n"
+            )
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["providers"], ["NVIDIA", "OpenRouter", "YouTube"])
+            stored = api.db.settings()
+            self.assertEqual(stored["nvidia_api_key"], nvidia)
+            self.assertEqual(stored["secondary_api_key"], openrouter)
+            self.assertEqual(stored["youtube_api_key"], youtube)
+            self.assertEqual(stored["secondary_api_enabled"], "1")
+            self.assertEqual(result["settings"]["nvidia_api_key"], "")
+            self.assertEqual(result["settings"]["secondary_api_key"], "")
+            self.assertTrue(result["settings"]["nvidia_key_detected"])
+            self.assertTrue(result["settings"]["secondary_key_detected"])
+
+    def test_api_txt_import_requires_completion_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            result = api.import_api_text("YOUTUBE_API_KEY=AIza1234567890abcdefghijklmnop")
+            self.assertFalse(result["ok"])
+            self.assertIn("NVIDIA", result["error"])
+            self.assertFalse(api.db.settings()["youtube_api_key"])
+
+    def test_saving_style_with_blank_masked_key_preserves_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            try:
+                api.db.save_settings({"nvidia_api_key": "nvapi-existing-secret"})
+                result = api.save_settings({
+                    "nvidia_api_key": "",
+                    "station_prompt": "Сучасний український alternative rock",
+                })
+                self.assertTrue(result["ok"])
+                self.assertEqual(
+                    api.db.settings()["nvidia_api_key"], "nvapi-existing-secret",
+                )
+            finally:
+                api.shutdown()
+
     def test_openrouter_credit_error_extracts_affordable_token_limit(self):
         self.assertEqual(
             _openrouter_affordable_tokens(

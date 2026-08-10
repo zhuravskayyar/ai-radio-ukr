@@ -12,8 +12,8 @@ import time
 
 from backend.api import RadioAPI
 
-_CACHEBUST_RE = re.compile(r'(style\.css|library\.css|radio-copy\.css|app\.js)\?v=auto')
-_SINGLE_INSTANCE_MUTEX_NAME = "Global\\LumenRadioSingleInstance"
+_CACHEBUST_RE = re.compile(r'(style\.css|library\.css|radio-copy\.css|vector\.css|app\.js)\?v=auto')
+_SINGLE_INSTANCE_MUTEX_NAME = "Global\\VectorRadioSingleInstance"
 
 
 def _acquire_single_instance_lock(timeout=6.0, poll=0.25):
@@ -44,20 +44,27 @@ def main():
         try:
             ctypes.windll.user32.MessageBoxW(
                 0,
-                "LUMEN Radio вже запущено в іншому вікні. Закрийте його перед повторним запуском.",
-                "LUMEN Radio",
+                "Vector Radio вже запущено в іншому вікні. Закрийте його перед повторним запуском.",
+                "Vector Radio",
                 0x40,
             )
         except Exception:
             pass
         return
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "VectorRadio.Desktop.1"
+            )
+        except Exception:
+            pass
     # Desktop radio should be allowed to start its local audio automation
     # without requiring an extra click in WebView2.
     os.environ.setdefault(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
         "--autoplay-policy=no-user-gesture-required",
     )
-    log_path = Path(__file__).resolve().parent / "lumen-radio.log"
+    log_path = Path(__file__).resolve().parent / "vector-radio.log"
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
@@ -67,17 +74,17 @@ def main():
     )
     fault_log = open(log_path, "a", encoding="utf-8")
     faulthandler.enable(fault_log)
-    logging.info("LUMEN startup: importing pywebview")
+    logging.info("Vector Radio startup: importing pywebview")
     try:
         import webview
     except ImportError:
         print("pywebview is not installed. Run: pip install -r requirements.txt")
         raise SystemExit(1)
-    logging.info("LUMEN startup: pywebview imported")
+    logging.info("Vector Radio startup: pywebview imported")
 
     root = Path(__file__).resolve().parent
     api = RadioAPI(root, enable_auto_restart=True)
-    logging.info("LUMEN startup: backend ready")
+    logging.info("Vector Radio startup: backend ready")
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             return
@@ -122,30 +129,46 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(root)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{server.server_port}/ui/index.html"
-    logging.info("LUMEN startup: UI server %s", url)
+    logging.info("Vector Radio startup: UI server %s", url)
     window = webview.create_window(
-        "LUMEN Radio",
+        "Vector Radio",
         url,
         js_api=api,
-        width=1320,
-        height=820,
-        min_size=(980, 680),
-        background_color="#080a0d",
+        width=1040,
+        height=800,
+        min_size=(760, 620),
+        background_color="#050607",
     )
-    logging.info("LUMEN startup: entering WebView event loop")
+    logging.info("Vector Radio startup: entering WebView event loop")
     try:
         # Auto GUI selection occasionally stalls before WebView2 is created on
-        # Windows. LUMEN ships for the installed Edge runtime, so select it
+        # Windows. Vector Radio ships for the installed Edge runtime, so select it
         # explicitly and fail visibly in the log if the runtime is unavailable.
-        webview.start(gui="edgechromium", debug="--debug" in sys.argv)
+        icon_path = next(
+            (
+                candidate
+                for candidate in (
+                    root / "assets" / "vector-radio.ico",
+                    root / "packaging" / "assets" / "vector-radio.ico",
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
+        webview.start(
+            gui="edgechromium",
+            debug="--debug" in sys.argv,
+            private_mode=False,
+            icon=str(icon_path) if icon_path else None,
+        )
     except Exception:
-        logging.exception("LUMEN startup: WebView failed")
+        logging.exception("Vector Radio startup: WebView failed")
         raise
     finally:
         try:
             api.shutdown()
         except Exception:
-            logging.exception("LUMEN shutdown failed")
+            logging.exception("Vector Radio shutdown failed")
         server.shutdown()
 
 

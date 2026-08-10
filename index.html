@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08090b">
+  <meta name="description" content="Vector Radio — персональне AI-радіо для Windows з ведучим Адамом Вектором і локальним українським голосом.">
+  <title>Vector Radio — персональне AI-радіо</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08090b;
+      --panel: rgba(19, 21, 25, .82);
+      --text: #f7f7f5;
+      --muted: #aaaeb7;
+      --yellow: #ffd400;
+      --yellow-soft: #ffec72;
+      --line: rgba(255, 255, 255, .1);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-height: 100%; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      overflow-x: hidden;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 22% 16%, rgba(255, 212, 0, .09), transparent 30rem),
+        radial-gradient(circle at 82% 78%, rgba(255, 255, 255, .05), transparent 34rem),
+        var(--bg);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .18;
+      background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, black, transparent 90%);
+    }
+
+    main {
+      width: min(1080px, calc(100% - 32px));
+      margin: 32px auto;
+      padding: clamp(28px, 6vw, 72px);
+      display: grid;
+      grid-template-columns: minmax(260px, .82fr) minmax(300px, 1.18fr);
+      align-items: center;
+      gap: clamp(28px, 6vw, 72px);
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(22, 24, 29, .9), var(--panel));
+      box-shadow: 0 34px 100px rgba(0, 0, 0, .48);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 360px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: #020303;
+      overflow: hidden;
+    }
+
+    .brand::after {
+      content: "";
+      position: absolute;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: rgba(255, 212, 0, .16);
+      filter: blur(70px);
+    }
+
+    .brand img {
+      position: relative;
+      z-index: 1;
+      width: min(92%, 430px);
+      height: auto;
+      object-fit: contain;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0 0 20px;
+      color: var(--yellow-soft);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--yellow);
+      box-shadow: 0 0 18px var(--yellow);
+    }
+
+    h1 {
+      max-width: 670px;
+      margin: 0;
+      font-size: clamp(44px, 7vw, 82px);
+      line-height: .94;
+      letter-spacing: -.055em;
+    }
+
+    h1 span { color: var(--yellow); }
+
+    .lead {
+      max-width: 650px;
+      margin: 26px 0 0;
+      color: var(--muted);
+      font-size: clamp(17px, 2vw, 20px);
+      line-height: 1.65;
+    }
+
+    .lead strong { color: var(--text); }
+
+    .features {
+      margin: 28px 0 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      list-style: none;
+    }
+
+    .features li {
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #d8dae0;
+      background: rgba(255, 255, 255, .035);
+      font-size: 13px;
+    }
+
+    .actions {
+      margin-top: 34px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .download {
+      min-height: 58px;
+      padding: 0 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      border-radius: 15px;
+      color: #090a0c;
+      background: var(--yellow);
+      box-shadow: 0 16px 42px rgba(255, 212, 0, .19);
+      font-weight: 850;
+      text-decoration: none;
+      transition: transform .18s ease, background .18s ease;
+    }
+
+    .download:hover {
+      transform: translateY(-2px);
+      background: #ffe13b;
+    }
+
+    .download:focus-visible {
+      outline: 3px solid white;
+      outline-offset: 4px;
+    }
+
+    .download svg { width: 21px; height: 21px; }
+
+    .requirements {
+      color: #888d97;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .requirements strong {
+      display: block;
+      color: #c8cad0;
+      font-size: 13px;
+    }
+
+    .source {
+      display: inline-block;
+      margin-top: 24px;
+      color: #aeb2bc;
+      font-size: 13px;
+      text-underline-offset: 4px;
+    }
+
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; }
+      .brand { min-height: 260px; }
+      .brand img { width: min(84%, 390px); }
+    }
+
+    @media (max-width: 480px) {
+      main { width: min(100% - 20px, 1080px); border-radius: 22px; }
+      .brand { min-height: 220px; border-radius: 18px; }
+      .download { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand" aria-hidden="true">
+      <img src="ui/assets/vector-radio-logo.png" alt="">
+    </div>
+
+    <section aria-labelledby="title">
+      <p class="eyebrow">AI-радіо для Windows</p>
+      <h1 id="title">Ваш ефір. Його голос — <span>Адам Вектор.</span></h1>
+      <p class="lead">
+        <strong>Vector Radio</strong> перетворює вашу музичну бібліотеку на живий персональний ефір:
+        підбирає треки у вибраному стилі, готує короткі виходи ведучого й озвучує їх локальним
+        українським StyleTTS2-голосом.
+      </p>
+
+      <ul class="features" aria-label="Можливості">
+        <li>Локальний український голос</li>
+        <li>Власна музика</li>
+        <li>Вибір жанру</li>
+        <li>API-ключ із TXT</li>
+      </ul>
+
+      <div class="actions">
+        <a class="download" href="https://github.com/zhuravskayyar/ai-radio-ukr/releases/latest/download/Vector_Radio_Setup_1.0.0.exe" aria-label="Завантажити Vector Radio для Windows">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/>
+          </svg>
+          Завантажити для Windows
+        </a>
+        <div class="requirements">
+          <strong>Windows 10/11 · 64-bit</strong>
+          Потрібен інтернет і приблизно 3 ГБ місця
+        </div>
+      </div>
+
+      <a class="source" href="https://github.com/zhuravskayyar/ai-radio-ukr">Відкрити проєкт на GitHub</a>
+    </section>
+  </main>
+</body>
+</html>
