@@ -65,6 +65,9 @@ class SecondaryApiTests(unittest.TestCase):
                 [provider["name"] for provider in providers],
                 ["nvidia", "nvidia-2", "nvidia-3", "nvidia-4", "nvidia-5"],
             )
+            self.assertTrue(all(
+                provider["timeout_seconds"] == 90 for provider in providers
+            ))
             self.assertEqual(result["settings"]["nvidia_key_count"], 5)
             self.assertEqual(result["settings"]["nvidia_api_key"], "")
             self.assertEqual(result["settings"]["nvidia_api_keys"], "")

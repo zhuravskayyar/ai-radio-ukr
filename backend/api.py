@@ -1701,7 +1701,11 @@ class RadioAPI:
                 "url": "https://integrate.api.nvidia.com/v1/chat/completions",
                 "key": nvidia_key,
                 "model": settings.get("nvidia_model") or DEFAULTS["nvidia_model"],
-                "timeout_seconds": 20,
+                # Hosted NIM can spend significant time warming/queuing a large
+                # model and completing the full 20-track JSON plan. All
+                # credentials run in parallel, so a 90-second per-key
+                # limit improves reliability without multiplying total wait.
+                "timeout_seconds": 90,
             })
 
         secondary_provider = None
