@@ -92,12 +92,12 @@ class UpdateManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             opener = FakeOpener({
                 LATEST_RELEASE_URL: release_payload(
-                    "1.0.2",
+                    "1.0.3",
                     "https://github.com/example/download/patch.exe",
                     "https://github.com/example/download/patch.exe.sha256",
                 ),
             })
-            manager = UpdateManager(Path(directory), "1.0.2", opener=opener)
+            manager = UpdateManager(Path(directory), "1.0.3", opener=opener)
 
             manager._check_worker()
 

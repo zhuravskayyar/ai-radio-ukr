@@ -9,6 +9,11 @@
       <span class="brand-text">VECTOR<span>RADIO</span></span>
     </button>
     <div class="top-actions">
+      <button class="nav top-library-button" data-page="library" aria-label="Відкрити бібліотеку" title="Бібліотека і завантаження">
+        <span class="library-note">♫</span>
+        <span>Бібліотека</span>
+        <strong id="topLibraryCount">0</strong>
+      </button>
       <button class="nav settings-gear" data-page="settings" aria-label="Налаштування" title="Налаштування">⚙</button>
     </div>
   </header>
@@ -37,6 +42,14 @@
               <div class="track" id="nowTitle">Оберіть трек</div>
               <div class="meta" id="nowArtist">Ваша бібліотека готова</div>
             </div>
+            <button class="nav main-library-status" data-page="library" aria-label="Відкрити бібліотеку та стан завантаження">
+              <span class="main-library-head">
+                <b id="mainDownloadTitle">Бібліотека завантажується…</b>
+                <strong id="mainDownloadPercent">0%</strong>
+              </span>
+              <span class="main-download-meter"><i id="mainDownloadProgressBar"></i></span>
+              <small id="mainDownloadDetails">Перевіряю локальні треки</small>
+            </button>
             <div class="player-panel">
               <div class="progress" id="progress"><i></i></div>
               <div class="player-controls">

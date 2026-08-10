@@ -1023,6 +1023,40 @@ function renderLibrary() {
   if ($('#librarySizeText')) {
     $('#librarySizeText').textContent = `${localTracks.length} треків · ${formatBytes(libraryBytes)}`;
   }
+  if ($('#topLibraryCount')) $('#topLibraryCount').textContent = localTracks.length;
+  const mainStatus = $('#mainLibraryStatus');
+  const mainProgress = state.radioQueue?.refilling
+    ? progressPercent
+    : (localTracks.length ? 100 : progressPercent);
+  if ($('#mainDownloadProgressBar')) {
+    $('#mainDownloadProgressBar').style.width = `${mainProgress}%`;
+  }
+  if ($('#mainDownloadPercent')) {
+    $('#mainDownloadPercent').textContent = `${Math.round(mainProgress)}%`;
+  }
+  if ($('#mainDownloadTitle')) {
+    if (state.radioQueue?.refilling) {
+      $('#mainDownloadTitle').textContent = progress.message || 'Завантажую наступний трек…';
+    } else if (localTracks.length) {
+      $('#mainDownloadTitle').textContent = `Бібліотека готова · ${localTracks.length} треків`;
+    } else if (state.radioQueue?.blocked_reason) {
+      $('#mainDownloadTitle').textContent = state.radioQueue.blocked_reason;
+    } else {
+      $('#mainDownloadTitle').textContent = 'Очікую на перший трек';
+    }
+  }
+  if ($('#mainDownloadDetails')) {
+    const currentTrack = String(progress.track || '').trim();
+    const transfer = Number(progress.downloaded_bytes || 0)
+      ? `${formatBytes(progress.downloaded_bytes)}${Number(progress.total_bytes || 0) ? ` / ${formatBytes(progress.total_bytes)}` : ''}`
+      : '';
+    const idleDetails = state.radioQueue?.blocked_reason
+      ? `${formatBytes(libraryBytes)} локально · ${state.radioQueue.blocked_reason}`
+      : `${formatBytes(libraryBytes)} локально · натисніть, щоб відкрити список`;
+    $('#mainDownloadDetails').textContent = [currentTrack, transfer]
+      .filter(Boolean).join(' · ') || idleDetails;
+  }
+  if (mainStatus) mainStatus.classList.toggle('busy', !!state.radioQueue?.refilling);
   renderUpdateStatus();
   $('#trackTable').innerHTML = visible.map((track, index) => `
     <div class="tr">

@@ -211,6 +211,9 @@ def verify():
           vectorLogoVisible: document.querySelector('.vector-logo').getBoundingClientRect().width > 100,
           centralPlayVisible: document.querySelector('#play').getBoundingClientRect().width > 60,
           settingsGearVisible: document.querySelector('.settings-gear').getBoundingClientRect().width > 20,
+          libraryButtonVisible: document.querySelector('.top-library-button').getBoundingClientRect().width > 80,
+          mainLibraryStatusVisible: document.querySelector('.main-library-status').getBoundingClientRect().height > 40,
+          mainLibraryText: document.querySelector('#mainDownloadTitle').textContent,
           diagnostics: window.radioDiagnostics()
         }))()""")
         print("during_intro", json.dumps(during_intro, ensure_ascii=True), flush=True)
@@ -254,7 +257,7 @@ def verify():
           checkSilenceWatchdog();
           return window.radioDiagnostics();
         })()""")
-        window.evaluate_js("document.querySelector('[data-page=\"library\"]').click()")
+        window.evaluate_js("document.querySelector('.top-library-button').click()")
         time.sleep(1)
         library = window.evaluate_js("""(() => ({
           active: document.querySelector('#library').classList.contains('active'),
@@ -298,6 +301,9 @@ def verify():
         assert during_intro["vectorLogoVisible"] is True
         assert during_intro["centralPlayVisible"] is True
         assert during_intro["settingsGearVisible"] is True
+        assert during_intro["libraryButtonVisible"] is True
+        assert during_intro["mainLibraryStatusVisible"] is True
+        assert "Бібліотека" in during_intro["mainLibraryText"]
         assert intro_diagnostics["radioBufferSize"] == 10
         assert intro_diagnostics["radioBufferTarget"] == 10
         assert intro_diagnostics["localPlaying"] is True
