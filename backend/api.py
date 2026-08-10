@@ -1292,12 +1292,15 @@ class RadioAPI:
 
     def _settings_payload(self):
         settings = self.db.settings()
-        settings["nvidia_key_detected"] = bool(self._nvidia_key(settings))
+        nvidia_key_count = len(self._nvidia_keys(settings))
+        settings["nvidia_key_count"] = nvidia_key_count
+        settings["nvidia_key_detected"] = nvidia_key_count > 0
         settings["secondary_key_detected"] = bool(self._secondary_key(settings))
         settings["youtube_key_detected"] = bool(self._youtube_key(settings))
         # The WebView only needs presence flags. Never send stored secrets back
         # to JavaScript or make them visible again after the initial import.
         settings["nvidia_api_key"] = ""
+        settings["nvidia_api_keys"] = ""
         settings["secondary_api_key"] = ""
         settings["youtube_api_key"] = ""
         try:
@@ -1470,6 +1473,16 @@ class RadioAPI:
         configured = settings.get("nvidia_api_key", "").strip()
         if configured:
             values.append(configured)
+        stored_pool = settings.get("nvidia_api_keys", "[]")
+        try:
+            parsed_pool = json.loads(stored_pool or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_pool = str(stored_pool or "").splitlines()
+        if isinstance(parsed_pool, list):
+            values.extend(
+                str(value).strip() for value in parsed_pool
+                if str(value).strip().startswith("nvapi-")
+            )
         values.extend(key for key in self._file_keys() if key.startswith("nvapi-"))
         return list(dict.fromkeys(values))
 
@@ -1966,7 +1979,7 @@ class RadioAPI:
             "YouTube": r"AIza[A-Za-z0-9_-]{20,}",
         }
         found = {
-            provider: next(iter(re.findall(pattern, raw)), "")
+            provider: list(dict.fromkeys(re.findall(pattern, raw)))
             for provider, pattern in patterns.items()
         }
         completion_providers = [
@@ -1982,23 +1995,28 @@ class RadioAPI:
             }
         values = {}
         if found["NVIDIA"]:
-            values["nvidia_api_key"] = found["NVIDIA"]
+            values["nvidia_api_key"] = found["NVIDIA"][0]
+            values["nvidia_api_keys"] = json.dumps(found["NVIDIA"])
         if found["OpenRouter"]:
             values.update({
-                "secondary_api_key": found["OpenRouter"],
+                "secondary_api_key": found["OpenRouter"][0],
                 "secondary_api_enabled": "1",
                 "secondary_api_url": "https://openrouter.ai/api/v1/chat/completions",
             })
         if found["YouTube"]:
-            values["youtube_api_key"] = found["YouTube"]
+            values["youtube_api_key"] = found["YouTube"][0]
         self.db.save_settings(values)
         # Re-importing a credential is the explicit user action that closes a
         # permanent auth/credit circuit and allows that provider to be tested.
         self._reset_provider_health(completion_providers)
         providers = completion_providers + (["YouTube"] if found["YouTube"] else [])
+        provider_counts = {
+            provider: len(found[provider]) for provider in providers
+        }
         return {
             "ok": True,
             "providers": providers,
+            "provider_counts": provider_counts,
             "settings": self._settings_payload(),
         }
 
@@ -2013,6 +2031,9 @@ class RadioAPI:
 
     def save_settings(self, values):
         values = dict(values or {})
+        # The WebView never receives the credential pool and therefore cannot
+        # replace or erase it. Only the validated TXT importer may update it.
+        values.pop("nvidia_api_keys", None)
         # Empty password fields mean "keep the stored key", not "erase it".
         # Credential replacement happens through import_api_text or by entering
         # a non-empty value in the legacy advanced form.

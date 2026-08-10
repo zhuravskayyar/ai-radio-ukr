@@ -86,6 +86,7 @@ DEFAULTS = {
     "ai_max_tokens": "1000",
     "youtube_api_key": "",
     "nvidia_api_key": "",
+    "nvidia_api_keys": "[]",
     "nvidia_model": "nvidia/nemotron-3-super-120b-a12b",
     "primary_ai_provider": "nvidia",
     "dj_ai_provider": "parallel",

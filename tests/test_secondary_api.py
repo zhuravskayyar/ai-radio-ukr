@@ -35,13 +35,41 @@ class SecondaryApiTests(unittest.TestCase):
             self.assertEqual(result["providers"], ["NVIDIA", "OpenRouter", "YouTube"])
             stored = api.db.settings()
             self.assertEqual(stored["nvidia_api_key"], nvidia)
+            self.assertEqual(json.loads(stored["nvidia_api_keys"]), [nvidia])
             self.assertEqual(stored["secondary_api_key"], openrouter)
             self.assertEqual(stored["youtube_api_key"], youtube)
             self.assertEqual(stored["secondary_api_enabled"], "1")
             self.assertEqual(result["settings"]["nvidia_api_key"], "")
+            self.assertEqual(result["settings"]["nvidia_api_keys"], "")
             self.assertEqual(result["settings"]["secondary_api_key"], "")
             self.assertTrue(result["settings"]["nvidia_key_detected"])
+            self.assertEqual(result["settings"]["nvidia_key_count"], 1)
             self.assertTrue(result["settings"]["secondary_key_detected"])
+
+    def test_api_txt_import_keeps_all_unique_nvidia_keys_and_masks_pool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            keys = [f"nvapi-test-credential-{index:02d}-abcdefghijkl" for index in range(5)]
+            raw = "\n".join(keys + [keys[2]])
+
+            result = api.import_api_text(raw)
+            stored = api.db.settings()
+            providers = api._ai_providers()
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["provider_counts"], {"NVIDIA": 5})
+            self.assertEqual(stored["nvidia_api_key"], keys[0])
+            self.assertEqual(json.loads(stored["nvidia_api_keys"]), keys)
+            self.assertEqual(api._nvidia_keys(), keys)
+            self.assertEqual(
+                [provider["name"] for provider in providers],
+                ["nvidia", "nvidia-2", "nvidia-3", "nvidia-4", "nvidia-5"],
+            )
+            self.assertEqual(result["settings"]["nvidia_key_count"], 5)
+            self.assertEqual(result["settings"]["nvidia_api_key"], "")
+            self.assertEqual(result["settings"]["nvidia_api_keys"], "")
+            safe_result = json.dumps(result)
+            self.assertTrue(all(key not in safe_result for key in keys))
 
     def test_api_txt_import_requires_completion_provider(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -163,6 +191,50 @@ class SecondaryApiTests(unittest.TestCase):
             self.assertFalse(diagnostics["secondary"]["ok"])
             self.assertNotIn("long provider response", diagnostics["secondary"]["error"])
             self.assertTrue(diagnostics["nvidia"]["ok"])
+
+    def test_imported_nvidia_pool_skips_timed_out_keys_and_keeps_working_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            keys = [f"nvapi-failover-key-{index:02d}-abcdefghijkl" for index in range(5)]
+            imported = api.import_api_text("\n".join(keys))
+            self.assertTrue(imported["ok"])
+
+            working_key = keys[1]
+            settings = api.db.settings()
+            settings["station_prompt"] = "alternative rock"
+
+            def completion(spec, *_args):
+                if spec["key"] != working_key:
+                    return {
+                        "provider": spec["name"], "candidate": "",
+                        "error": f'{spec["name"]} timed out',
+                        "error_kind": "timeout",
+                    }
+                return {
+                    "provider": spec["name"],
+                    "candidate": json.dumps({
+                        "tracks": [
+                            {"artist": "Working Artist", "title": "Working Track"},
+                        ],
+                        "similarTracks": [], "targetMood": [], "avoid": [],
+                    }),
+                    "error": "",
+                }
+
+            with patch("backend.api._chat_completion", side_effect=completion) as mocked:
+                first = api._queue_search_plan(settings)
+                first_call_count = mocked.call_count
+                second = api._queue_search_plan(settings)
+
+            self.assertEqual(first["provider"], "nvidia-2")
+            self.assertEqual(second["provider"], "nvidia-2")
+            self.assertEqual(first_call_count, 5)
+            self.assertEqual(mocked.call_count, 6)
+            health = api.provider_health()
+            self.assertEqual(
+                [item["state"] for item in health],
+                ["cooldown", "ready", "cooldown", "cooldown", "cooldown"],
+            )
 
     def test_pasted_nvidia_examples_become_parallel_dj_credentials(self):
         with tempfile.TemporaryDirectory() as directory:

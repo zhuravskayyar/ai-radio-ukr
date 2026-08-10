@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 REPOSITORY = "zhuravskayyar/ai-radio-ukr"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 PATCH_NAME_TEMPLATE = "Vector_Radio_Patch_{version}.exe"

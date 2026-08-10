@@ -452,8 +452,9 @@ function fillSettings() {
   }
   const nvidiaStatus = $('#nvidiaStatus');
   if (nvidiaStatus) {
+    const nvidiaKeyCount = Number(state.settings.nvidia_key_count || 0);
     nvidiaStatus.textContent = state.settings.nvidia_key_detected
-      ? '● NVIDIA API key знайдено'
+      ? `● NVIDIA API: знайдено ключів — ${nvidiaKeyCount}`
       : '○ NVIDIA API key не знайдено';
   }
   const youtubeStatus = $('#youtubeStatus');
@@ -2020,7 +2021,11 @@ if (importApiButton) importApiButton.onclick = async () => {
     }
     state.settings = result.settings || state.settings;
     $('#apiTextInput').value = '';
-    const providers = (result.providers || []).join(', ');
+    const providerCounts = result.provider_counts || {};
+    const providers = (result.providers || []).map((provider) => {
+      const count = Number(providerCounts[provider] || 1);
+      return count > 1 ? `${provider} ×${count}` : provider;
+    }).join(', ');
     status.textContent = `Збережено локально: ${providers}. Секрети приховано.`;
     fillSettings();
     toast('API-ключі збережено');

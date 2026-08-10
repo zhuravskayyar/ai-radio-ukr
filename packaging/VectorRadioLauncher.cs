@@ -9,8 +9,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Launcher for Vector Radio")]
 [assembly: AssemblyCompany("Vector Radio")]
 [assembly: AssemblyProduct("Vector Radio")]
-[assembly: AssemblyVersion("1.0.4.0")]
-[assembly: AssemblyFileVersion("1.0.4.0")]
+[assembly: AssemblyVersion("1.0.5.0")]
+[assembly: AssemblyFileVersion("1.0.5.0")]
 
 internal static class VectorRadioLauncher
 {
