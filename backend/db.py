@@ -57,7 +57,8 @@ DEFAULTS = {
     "queue_max_duration": "480",
     "queue_cache_max_gb": "3",
     "dynamic_discovery_enabled": "1",
-    "licensed_sources_confirmed": "0",
+    "licensed_sources_confirmed": "1",
+    "auto_update_enabled": "1",
     "station_prompt": "Сучасний альт рок, український і російськомовний alternative/indie rock; без музейного старого росроку типу Цоя, Кино, ДДТ, Би-2, Алисы чи Аквариума; чергуй впізнавані та свіжі треки, без попси й каверів.",
     "station_prompt_en": "",
     "station_prompt_en_source": "",
@@ -604,6 +605,15 @@ class Database:
                     )"""
                 )
                 db.execute("PRAGMA user_version=17")
+            if schema_version < 18:
+                # Version 1.0.2 enables the technical auto-download mode by
+                # default. The UI still reminds listeners to use only sources
+                # they are allowed to download and play.
+                db.execute(
+                    "UPDATE settings SET value='1' "
+                    "WHERE key IN ('dynamic_discovery_enabled','licensed_sources_confirmed')"
+                )
+                db.execute("PRAGMA user_version=18")
             db.execute(
                 "UPDATE settings SET value=? "
                 "WHERE key='ai_max_tokens' AND value IN ('160','220','320','360')",

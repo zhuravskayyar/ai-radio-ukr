@@ -15,6 +15,9 @@ class RadioQueueTests(unittest.TestCase):
     def make_library(self, directory, count=14):
         root = Path(directory)
         db = Database(root / "radio.db")
+        # Most unit tests exercise deterministic local queue behaviour. Tests
+        # dedicated to online refill explicitly enable discovery below.
+        db.save_settings({"dynamic_discovery_enabled": "0"})
         for number in range(count):
             relative = f"downloads/Artist {number} - Track {number}.mp3"
             path = root / relative
@@ -381,6 +384,10 @@ class RadioQueueTests(unittest.TestCase):
     def test_discovery_requires_both_opt_in_switches(self):
         with tempfile.TemporaryDirectory() as directory:
             db, root = self.make_library(directory, count=4)
+            db.save_settings({
+                "dynamic_discovery_enabled": "1",
+                "licensed_sources_confirmed": "0",
+            })
             queue = RadioQueueManager(db, root)
             blocked = queue.status()
             self.assertFalse(blocked["discovery_enabled"])
@@ -396,6 +403,10 @@ class RadioQueueTests(unittest.TestCase):
     def test_blocked_poll_does_not_spawn_refill_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             db, root = self.make_library(directory, count=0)
+            db.save_settings({
+                "dynamic_discovery_enabled": "1",
+                "licensed_sources_confirmed": "0",
+            })
             calls = []
             queue = RadioQueueManager(
                 db, root, discoverer=lambda excluded: calls.append(excluded),
@@ -418,7 +429,10 @@ class RadioQueueTests(unittest.TestCase):
                 requested.set()
                 return None
 
-            db.save_settings({"licensed_sources_confirmed": "1"})
+            db.save_settings({
+                "dynamic_discovery_enabled": "1",
+                "licensed_sources_confirmed": "1",
+            })
             queue = RadioQueueManager(db, root, discoverer=discoverer)
             snapshot = queue.bootstrap()
 
@@ -435,7 +449,10 @@ class RadioQueueTests(unittest.TestCase):
                 calls.append(excluded)
                 raise RuntimeError("Downloader unavailable")
 
-            db.save_settings({"licensed_sources_confirmed": "1"})
+            db.save_settings({
+                "dynamic_discovery_enabled": "1",
+                "licensed_sources_confirmed": "1",
+            })
             queue = RadioQueueManager(db, root, discoverer=discoverer)
             queue.request_refill()
             queue._refill_thread.join(2)

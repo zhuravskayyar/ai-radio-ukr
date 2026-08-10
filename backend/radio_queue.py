@@ -12,17 +12,42 @@ LOGGER = logging.getLogger(__name__)
 class RadioQueueManager:
     """Persistent self-refilling music buffer, separate from TTS pre-generation."""
 
-    def __init__(self, db, root: Path, discoverer=None, random_source=None):
+    def __init__(
+        self, db, root: Path, discoverer=None, random_source=None,
+        discovery_available=None,
+    ):
         self.db = db
         self.root = Path(root)
         self.discoverer = discoverer
+        self.discovery_available = discovery_available
         self.random = random_source or random.Random()
         self._lock = threading.RLock()
         self._refill_thread = None
         self._last_error = ""
         self._phase = "idle"
+        self._progress = {
+            "stage": "idle", "percent": 0, "message": "",
+            "track": "", "downloaded_bytes": 0, "total_bytes": 0,
+            "speed": 0, "eta": 0,
+        }
         self._retry_after = 0.0
         self._stopping = False
+
+    def update_progress(
+        self, stage, percent=0, message="", track="", **details,
+    ):
+        with self._lock:
+            self._progress = {
+                "stage": str(stage or "idle"),
+                "percent": max(0, min(100, round(float(percent or 0), 1))),
+                "message": str(message or ""),
+                "track": str(track or ""),
+                "downloaded_bytes": int(details.get("downloaded_bytes") or 0),
+                "total_bytes": int(details.get("total_bytes") or 0),
+                "speed": float(details.get("speed") or 0),
+                "eta": int(details.get("eta") or 0),
+            }
+            return dict(self._progress)
 
     def _int(self, key, default, minimum=0, maximum=10_000):
         try:
@@ -33,7 +58,11 @@ class RadioQueueManager:
 
     def _enabled_discovery(self):
         state = self._discovery_state()
-        return state["requested"] and state["rights_confirmed"]
+        return (
+            state["requested"]
+            and state["rights_confirmed"]
+            and state["available"]
+        )
 
     def _discovery_state(self):
         settings = self.db.settings()
@@ -44,6 +73,12 @@ class RadioQueueManager:
         rights_confirmed = str(
             settings.get("licensed_sources_confirmed", "0")
         ).casefold() in truthy
+        available = True
+        if self.discovery_available is not None:
+            try:
+                available = bool(self.discovery_available())
+            except Exception:
+                available = False
         if not requested:
             blocked_reason = "AI-пошук треків вимкнений у налаштуваннях"
         elif not rights_confirmed:
@@ -51,11 +86,14 @@ class RadioQueueManager:
                 "Пошук готовий, але потрібне підтвердження права "
                 "завантажувати й відтворювати вибрані джерела"
             )
+        elif not available:
+            blocked_reason = "Додайте NVIDIA або OpenRouter API-ключ, щоб запустити автоматичний пошук"
         else:
             blocked_reason = ""
         return {
             "requested": requested,
             "rights_confirmed": rights_confirmed,
+            "available": available,
             "blocked_reason": blocked_reason,
         }
 
@@ -230,7 +268,20 @@ class RadioQueueManager:
         entries = entries if entries is not None else self._current_entries()
         entries = self._sanitize_entries(entries)
         tracks = {track["id"]: track for track in self.db.tracks()}
-        items = [tracks[entry["track_id"]] for entry in entries if entry["track_id"] in tracks]
+        items = []
+        for entry in entries:
+            track = tracks.get(entry["track_id"])
+            if not track:
+                continue
+            enriched = dict(track)
+            local_path = str(track.get("local_path") or "").strip()
+            try:
+                enriched["file_size_bytes"] = (
+                    (self.root / local_path).stat().st_size if local_path else 0
+                )
+            except OSError:
+                enriched["file_size_bytes"] = 0
+            items.append(enriched)
         target, refill, critical = self._thresholds()
         discovery = self._discovery_state()
         thread_running = bool(self._refill_thread and self._refill_thread.is_alive())
@@ -246,11 +297,15 @@ class RadioQueueManager:
             "critical_threshold": critical,
             "refilling": thread_running,
             "discovery_enabled": (
-                discovery["requested"] and discovery["rights_confirmed"]
+                discovery["requested"]
+                and discovery["rights_confirmed"]
+                and discovery["available"]
             ),
             "discovery_requested": discovery["requested"],
             "rights_confirmed": discovery["rights_confirmed"],
+            "discovery_available": discovery["available"],
             "blocked_reason": discovery["blocked_reason"],
+            "progress": dict(self._progress),
             "last_error": self._last_error,
             "phase": phase,
             "retry_in_seconds": max(0, round(self._retry_after - time.monotonic())),
@@ -271,7 +326,11 @@ class RadioQueueManager:
             entries = self._fill_local(entries)
             self._save(entries)
             snapshot = self._snapshot(entries)
-        if self._enabled_discovery() and snapshot["size"] <= snapshot["refill_threshold"]:
+        if (
+            self.discoverer
+            and self._enabled_discovery()
+            and snapshot["size"] <= snapshot["refill_threshold"]
+        ):
             return self.request_refill()
         return snapshot
 
@@ -306,7 +365,7 @@ class RadioQueueManager:
                 entries = self._fill_local(entries, target if not self._enabled_discovery() else refill)
             self._save(entries)
             snapshot = self._snapshot(entries)
-        if self._enabled_discovery() and snapshot["size"] <= refill:
+        if self.discoverer and self._enabled_discovery() and snapshot["size"] <= refill:
             self.request_refill()
         self.clean_cache()
         result = self.status()
@@ -322,6 +381,8 @@ class RadioQueueManager:
         with self._lock:
             if self._stopping:
                 return self._snapshot()
+            if not self.discoverer:
+                return self._snapshot()
             if not self._enabled_discovery():
                 # The UI polls this method frequently. Do not create a short-lived
                 # worker every five seconds while the explicit rights gate is off.
@@ -333,6 +394,9 @@ class RadioQueueManager:
             if not force and self._retry_after > time.monotonic():
                 return self._snapshot()
             self._phase = "starting"
+            self.update_progress(
+                "starting", 1, "Готую автоматичний пошук треків",
+            )
             self._refill_thread = threading.Thread(
                 target=self._refill_worker,
                 name="lumen-radio-refill",
@@ -352,6 +416,9 @@ class RadioQueueManager:
     def _refill_worker(self):
         self._last_error = ""
         self._phase = "searching"
+        self.update_progress(
+            "planning", 5, "AI формує добірку під стиль станції",
+        )
         LOGGER.info("AI library refill started")
         try:
             while True:
@@ -369,6 +436,9 @@ class RadioQueueManager:
                     except Exception as exc:
                         self._last_error = str(exc)
                         self._phase = "error"
+                        self.update_progress(
+                            "error", 0, self._last_error,
+                        )
                         self._retry_after = time.monotonic() + 5
                         LOGGER.exception("AI library refill failed")
                 with self._lock:
@@ -386,6 +456,11 @@ class RadioQueueManager:
                         self._last_error = ""
                         self._retry_after = 0.0
                         self._phase = "searching"
+                        self.update_progress(
+                            "ready", 100,
+                            f"Завантажено: {discovered.get('artist', '')} — {discovered.get('title', '')}",
+                            track=f"{discovered.get('artist', '')} — {discovered.get('title', '')}",
+                        )
                         LOGGER.info(
                             "AI library added track: %s - %s",
                             discovered.get("artist", ""), discovered.get("title", ""),
@@ -398,6 +473,11 @@ class RadioQueueManager:
         finally:
             if not self._last_error:
                 self._phase = "idle"
+                entries = self._current_entries()
+                self.update_progress(
+                    "complete", 100,
+                    f"Локально готово {len(entries)} із {self._target()} треків",
+                )
             LOGGER.info(
                 "AI library refill finished%s",
                 f": {self._last_error}" if self._last_error else "",

@@ -1,5 +1,5 @@
 #define AppName "Vector Radio Patch"
-#define AppVersion "1.0.1"
+#define AppVersion "1.0.2"
 
 [Setup]
 AppId={{A71517CA-8A77-4CB4-9D40-AD99D801945B}
@@ -31,10 +31,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\main.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\Qwen_python_20260804_4sskbslqs.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\ui\*"; DestDir: "{app}\ui"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\scripts\migrate_local_library.py"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "..\docs\PATCH_1.0.1.md"; DestDir: "{app}"; DestName: "PATCH_1.0.1.md"; Flags: ignoreversion
+Source: "..\docs\PATCH_1.0.2.md"; DestDir: "{app}"; DestName: "PATCH_1.0.2.md"; Flags: ignoreversion
 
 [Run]
 Filename: "{app}\runtime\python.exe"; Parameters: """{app}\tools\migrate_local_library.py"" ""{userdesktop}\localRadio"" ""{app}"""; WorkingDir: "{app}"; StatusMsg: "Перенесення наявної локальної бібліотеки..."; Flags: runhidden waituntilterminated; Check: LegacyLibraryExists
@@ -63,7 +64,7 @@ begin
     FileExists(InstalledRoot + '\runtime\python.exe');
   if not Result then
     MsgBox(
-      'Vector Radio не знайдено. Спочатку встановіть повну версію 1.0.0.',
+      'Vector Radio не знайдено. Спочатку встановіть повну версію.',
       mbError,
       MB_OK
     );

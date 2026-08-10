@@ -280,6 +280,7 @@ def download_audio_item(
     candidates: int = 5,
     retries: int = 5,
     validator=None,
+    progress_callback=None,
 ):
     """Download one local audio file using the same engine as the LUMEN GUI.
 
@@ -314,6 +315,24 @@ def download_audio_item(
         completed_infos = []
 
         def capture_progress(data):
+            status = str(data.get('status') or '')
+            downloaded_bytes = int(data.get('downloaded_bytes') or 0)
+            total_bytes = int(
+                data.get('total_bytes') or data.get('total_bytes_estimate') or 0
+            )
+            percent = (
+                min(100, max(0, downloaded_bytes / total_bytes * 100))
+                if total_bytes else (100 if status == 'finished' else 0)
+            )
+            if progress_callback:
+                progress_callback({
+                    'status': status,
+                    'percent': round(percent, 1),
+                    'downloaded_bytes': downloaded_bytes,
+                    'total_bytes': total_bytes,
+                    'speed': float(data.get('speed') or 0),
+                    'eta': int(data.get('eta') or 0),
+                })
             if data.get('status') == 'finished' and isinstance(data.get('info_dict'), dict):
                 completed_infos.append(data['info_dict'])
 

@@ -31,6 +31,8 @@ const state = {
   rotationCycle: 1,
   tracksSinceStory: 3,
   radioQueue: null,
+  updateStatus: null,
+  appVersion: '',
   pilotClock: null,
   broadcastSafety: null,
   manualPause: false,
@@ -79,6 +81,8 @@ async function boot() {
     state.settings = data.settings;
     state.pilotClock = data.pilot_clock || null;
     state.broadcastSafety = data.broadcast_safety || null;
+    state.updateStatus = data.update_status || null;
+    state.appVersion = data.app_version || '';
     ensureCharacterSettings();
     ensureLibraryActions();
     fillSettings();
@@ -237,14 +241,9 @@ function ensureCharacterSettings() {
             <option value="1">Увімкнений · фоновий yt-dlp</option>
           </select>
         </label>
-        <label>Права на джерела
-          <select data-setting="licensed_sources_confirmed">
-            <option value="0">Не підтверджено</option>
-            <option value="1">Підтверджую право завантажувати й відтворювати</option>
-          </select>
-        </label>
+        <p class="hint"><b>Автоматичний режим активний.</b> Технічний дозвіл на пошук зберігається патчем. Користувач сам відповідає за право використовувати вибрані джерела й композиції.</p>
         <p id="queueStatus" class="hint">Буфер працює з локальної бібліотеки</p>
-        <p class="hint">Онлайн-пошук запускається лише з підтвердженням прав. Файли кешуються до встановленого ліміту, а плеєр ніколи не чекає завершення refill.</p>
+        <p class="hint">Онлайн-пошук працює у фоні. Файли кешуються до встановленого ліміту, а плеєр не блокується під час поповнення.</p>
       </article>`);
   }
 
@@ -990,17 +989,84 @@ function renderLibrary() {
       libraryStatus.textContent = 'Очікую на перший трек від AI та LUMEN Downloader';
     }
   }
+  const progress = state.radioQueue?.progress || {};
+  const progressPercent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const progressBar = $('#downloadProgressBar');
+  const progressLabel = $('#downloadProgressPercent');
+  const progressText = $('#downloadProgressText');
+  const progressDetails = $('#downloadProgressDetails');
+  if (progressBar) progressBar.style.width = `${progressPercent}%`;
+  if (progressLabel) progressLabel.textContent = `${Math.round(progressPercent)}%`;
+  if (progressText) {
+    progressText.textContent = progress.message || (
+      state.radioQueue?.refilling
+        ? 'AI шукає наступний трек…'
+        : 'Бібліотека готова до відтворення'
+    );
+  }
+  if (progressDetails) {
+    const details = [];
+    if (progress.track) details.push(progress.track);
+    if (Number(progress.downloaded_bytes || 0)) {
+      const total = Number(progress.total_bytes || 0);
+      details.push(`${formatBytes(progress.downloaded_bytes)}${total ? ` / ${formatBytes(total)}` : ''}`);
+    }
+    if (Number(progress.speed || 0)) details.push(`${formatBytes(progress.speed)}/с`);
+    if (Number(progress.eta || 0)) details.push(`ще ≈ ${Math.ceil(progress.eta)} с`);
+    progressDetails.textContent = details.join(' · ') || 'Автоматичне поповнення бібліотеки ввімкнено';
+  }
+  const localTracks = state.tracks.filter(hasPlayable);
+  const libraryBytes = localTracks.reduce(
+    (total, track) => total + Number(track.file_size_bytes || 0), 0
+  );
+  if ($('#libraryReadyCount')) $('#libraryReadyCount').textContent = localTracks.length;
+  if ($('#librarySizeText')) {
+    $('#librarySizeText').textContent = `${localTracks.length} треків · ${formatBytes(libraryBytes)}`;
+  }
+  renderUpdateStatus();
   $('#trackTable').innerHTML = visible.map((track, index) => `
     <div class="tr">
       <span>•</span>
       <span class="track"><b>${esc(track.title)}</b><small>${esc(track.artist)}</small></span>
-      <button class="badge ${hasPlayable(track) ? 'ready' : ''}" onclick="resolveTrack(${index})">${isRejectedDiscoveryCache(track) ? '× СТАРИЙ КЕШ' : track.local_path ? '● LOCAL' : track.status === 'unavailable' ? '↻ ПОВТОРИТИ' : '↓ ЗАВАНТАЖИТИ'}</button>
+      <button class="badge ${hasPlayable(track) ? 'ready' : ''}" onclick="resolveTrack(${index})">${isRejectedDiscoveryCache(track) ? '× СТАРИЙ КЕШ' : track.local_path ? `● ЗАВАНТАЖЕНО${Number(track.file_size_bytes || 0) ? ` · ${formatBytes(track.file_size_bytes)}` : ''}` : track.status === 'unavailable' ? '↻ ПОВТОРИТИ' : '↓ ЗАВАНТАЖИТИ'}</button>
       <button class="badge ${track.vocal_start_ms || track.outro_start_ms ? 'ready' : ''}" onclick="editTrackAnalysis(${index})">${track.vocal_start_ms || track.outro_start_ms ? '● ЗАДАНО' : '○ ДОДАТИ'}</button>
       <button class="badge ${Number(track.story_count) ? 'ready' : ''}" onclick="addMusicStory(${index})">${Number(track.story_count) ? `● ${track.story_count} STORY${Number(track.story_corroborated_count) ? ` · ${track.story_corroborated_count}×2` : ''}` : '○ STORY'}</button>
       <button class="badge ${track.pronunciation_review ? '' : 'ready'}" onclick="${track.pronunciation_review ? 'autoPronunciation' : 'editPronunciation'}(${index})">${track.pronunciation_review ? '↻ АВТО ВИМОВА' : '● ВИМОВА'}</button>
       <button onclick="tune(${index});showPage('onair')">В ефір</button>
     </div>`).join('') || '<p class="hint">Перший трек з’явиться тут одразу після завантаження</p>';
   $('#loadMore').hidden = visible.length >= state.tracks.length;
+}
+
+function formatBytes(value) {
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes < 1024) return `${Math.round(bytes)} Б`;
+  const units = ['КБ', 'МБ', 'ГБ'];
+  let size = bytes / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function renderUpdateStatus() {
+  const status = state.updateStatus || {};
+  const percent = Math.max(0, Math.min(100, Number(status.percent || 0)));
+  const version = status.current_version || state.appVersion || '—';
+  if ($('#appVersionLabel')) $('#appVersionLabel').textContent = `v${version}`;
+  if ($('#updateProgressBar')) $('#updateProgressBar').style.width = `${percent}%`;
+  if ($('#updateProgressText')) {
+    const error = String(status.error || '').trim();
+    $('#updateProgressText').textContent = error || status.message || 'Перевіряю версію…';
+  }
+  const button = $('#applyUpdate');
+  if (button) {
+    button.hidden = !status.ready;
+    button.textContent = status.latest_version
+      ? `Встановити ${status.latest_version}`
+      : 'Встановити оновлення';
+  }
 }
 
 function esc(value = '') {
@@ -1976,6 +2042,23 @@ $('#loadMore').onclick = () => {
   renderLibrary();
 };
 
+if ($('#applyUpdate')) {
+  $('#applyUpdate').onclick = async () => {
+    const button = $('#applyUpdate');
+    button.disabled = true;
+    button.textContent = 'Закриваю програму…';
+    try {
+      const result = await window.pywebview.api.apply_update();
+      if (!result?.ok) throw new Error(result?.error || 'Патч не готовий');
+      toast(result.message || 'Встановлюю оновлення…');
+    } catch (error) {
+      button.disabled = false;
+      renderUpdateStatus();
+      toast(`Не вдалося встановити оновлення: ${error?.message || error}`);
+    }
+  };
+}
+
 $('#saveSettings').onclick = async () => {
   try {
     const values = {};
@@ -2045,6 +2128,21 @@ setInterval(() => {
   if (booted) void refreshPilotClock();
 }, 30000);
 
+let updateRefreshBusy = false;
+setInterval(async () => {
+  const api = window.pywebview?.api;
+  if (!booted || updateRefreshBusy || typeof api?.update_status !== 'function') return;
+  updateRefreshBusy = true;
+  try {
+    state.updateStatus = await api.update_status();
+    renderUpdateStatus();
+  } catch (error) {
+    console.warn('Update status refresh failed', error);
+  } finally {
+    updateRefreshBusy = false;
+  }
+}, 3000);
+
 setInterval(() => {
   if (booted) checkSilenceWatchdog();
 }, 250);
@@ -2079,7 +2177,10 @@ setInterval(async () => {
       const statusChanged = oldSignature !== newSignature
         || state.radioQueue?.refilling !== snapshot.refilling
         || state.radioQueue?.last_error !== snapshot.last_error
-        || state.radioQueue?.phase !== snapshot.phase;
+        || state.radioQueue?.phase !== snapshot.phase
+        || state.radioQueue?.progress?.stage !== snapshot.progress?.stage
+        || Math.round(Number(state.radioQueue?.progress?.percent || 0))
+          !== Math.round(Number(snapshot.progress?.percent || 0));
       applyRadioQueue(snapshot, shouldAutoStart);
       if (statusChanged) render();
       if (shouldAutoStart && playableIndices().length) {

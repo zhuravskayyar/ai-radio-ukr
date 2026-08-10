@@ -260,7 +260,10 @@ def verify():
           active: document.querySelector('#library').classList.contains('active'),
           count: document.querySelector('#libraryCount').textContent,
           localRows: [...document.querySelectorAll('#trackTable .badge')]
-            .filter(node => node.textContent.includes('LOCAL')).length,
+            .filter(node => node.textContent.includes('ЗАВАНТАЖЕНО')).length,
+          downloadMonitor: !!document.querySelector('#downloadProgressBar'),
+          updateMonitor: !!document.querySelector('#updateProgressBar'),
+          sizeText: document.querySelector('#librarySizeText').textContent,
           corroboratedStoryBadges: [...document.querySelectorAll('#trackTable .badge')]
             .filter(node => node.textContent.includes('STORY · 1×2')).length,
           refreshLabel: document.querySelector('#refreshAiLibrary').textContent
@@ -331,6 +334,10 @@ def verify():
         assert manual_pause["silenceWarnings"] == watchdog_counts[0]
         assert manual_pause["silenceFallbacks"] == watchdog_counts[1]
         assert library["active"] is True
+        assert library["localRows"] >= 1
+        assert library["downloadMonitor"] is True
+        assert library["updateMonitor"] is True
+        assert "трек" in library["sizeText"]
         assert library["refreshLabel"] == "↻ Оновити AI-бібліотеку"
         assert library["corroboratedStoryBadges"] >= 1
         assert simple_settings["active"] is True

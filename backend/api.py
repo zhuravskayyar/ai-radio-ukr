@@ -39,6 +39,7 @@ from .voice_director import VoiceDirector
 from .host_brain import HostBrain
 from .radio_queue import RadioQueueManager
 from .broadcast_safety import BroadcastSafety
+from .updater import APP_VERSION, UpdateManager
 
 
 DEFAULT_TTS_VOICE = "uk-UA-OstapNeural"
@@ -879,6 +880,7 @@ class RadioAPI:
         # Off by default: scripts/tests construct RadioAPI too, and must never
         # trigger a real os._exit()/process relaunch as a side effect.
         self._enable_auto_restart = enable_auto_restart
+        self.updater = UpdateManager(root)
         self._prepare_ai_session()
         self._last_intro_style = ""
         self._discovery_plan_lock = threading.RLock()
@@ -908,7 +910,10 @@ class RadioAPI:
                 # A broken research file must not prevent the radio from booting.
                 pass
         self.radio_queue = RadioQueueManager(
-            self.db, self.root, discoverer=self._discover_queue_track
+            self.db,
+            self.root,
+            discoverer=self._discover_queue_track,
+            discovery_available=lambda: bool(self._ai_providers(self.db.settings())),
         )
 
     def _sync_host_prompt_version(self):
@@ -1080,8 +1085,15 @@ class RadioAPI:
             self.scan_music()
             queue = self.radio_queue.bootstrap()
             settings = self._settings_payload()
+            if (
+                self._enable_auto_restart
+                and str(settings.get("auto_update_enabled", "1")) == "1"
+            ):
+                self.updater.check()
             return {
                 "ok": True,
+                "app_version": APP_VERSION,
+                "update_status": self.updater.status(),
                 "tracks": self._ai_library_tracks(),
                 "settings": settings,
                 "radio_queue": queue,
@@ -1098,7 +1110,48 @@ class RadioAPI:
                 "tracks": [],
                 "settings": {},
                 "radio_queue": None,
+                "app_version": APP_VERSION,
+                "update_status": self.updater.status(),
             }
+
+    def update_status(self):
+        return self.updater.status()
+
+    def check_for_updates(self):
+        if not self._enable_auto_restart:
+            return {"ok": False, "error": "Оновлення доступні лише у Windows-програмі"}
+        self.updater.check(force=True)
+        return self.updater.status()
+
+    def apply_update(self):
+        if not self._enable_auto_restart:
+            return {"ok": False, "error": "Автооновлення недоступне в цьому режимі"}
+        patch = self.updater.patch_path()
+        if not patch:
+            return {"ok": False, "error": "Перевірений патч ще не завантажено"}
+        pythonw = self.root / "runtime" / "pythonw.exe"
+        helper = self.root / "backend" / "update_helper.py"
+        if not pythonw.is_file() or not helper.is_file():
+            return {"ok": False, "error": "Не знайдено локальний модуль оновлення"}
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        subprocess.Popen(
+            [
+                str(pythonw), str(helper),
+                "--pid", str(os.getpid()),
+                "--root", str(self.root),
+                "--patch", str(patch),
+            ],
+            cwd=str(self.root),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        threading.Timer(0.8, lambda: os._exit(0)).start()
+        return {"ok": True, "message": "Vector Radio закриється, встановить патч і запуститься знову"}
 
     def pilot_hour(self, reference_iso=None):
         settings = self.db.settings()
@@ -1200,7 +1253,12 @@ class RadioAPI:
                 continue
             if float(track.get("match_score") or 0) < 0.75:
                 continue
-            tracks.append(track)
+            enriched = dict(track)
+            try:
+                enriched["file_size_bytes"] = (self.root / local_path).stat().st_size
+            except OSError:
+                enriched["file_size_bytes"] = 0
+            tracks.append(enriched)
         tracks.sort(key=lambda track: int(track.get("id") or 0), reverse=True)
         return [
             {**track, "rank": position}
@@ -2489,9 +2547,9 @@ darkwave чи post-punk: українська та російськомовна 
             "duration": info.get("duration"),
         }
 
-    @staticmethod
     def _download_audio_with_lumen(
-        item, output_dir, *, search=False, music_search=False, validator=None,
+        self, item, output_dir, *, search=False, music_search=False,
+        validator=None, progress_callback=None,
     ):
         try:
             from Qwen_python_20260804_4sskbslqs import download_audio_item
@@ -2505,6 +2563,16 @@ darkwave чи post-punk: українська та російськомовна 
             candidates=5,
             retries=2,
             validator=validator,
+            progress_callback=progress_callback,
+        )
+
+    def _set_queue_progress(
+        self, stage, percent=0, message="", track="", **details,
+    ):
+        if not hasattr(self, "radio_queue"):
+            return None
+        return self.radio_queue.update_progress(
+            stage, percent, message, track, **details,
         )
 
     def _clear_discovery_plan_cache(self):
@@ -2582,6 +2650,9 @@ darkwave чи post-punk: українська та російськомовна 
     def _discover_queue_track(self, excluded_track_ids):
         if self._shutdown_event.is_set():
             return None
+        self._set_queue_progress(
+            "planning", 6, "AI добирає відомі треки під стиль станції",
+        )
         settings = self.db.settings()
         enabled = str(settings.get("dynamic_discovery_enabled", "0")).casefold()
         licensed = str(settings.get("licensed_sources_confirmed", "0")).casefold()
@@ -2672,6 +2743,24 @@ darkwave чи post-punk: українська та російськомовна 
                 return True
 
             query = f'{recommendation["artist"]} - {recommendation["title"]}'
+            self._set_queue_progress(
+                "searching", 18,
+                "Шукаю точний офіційний аудіозапис",
+                track=query,
+            )
+
+            def download_progress(progress, selected=query):
+                raw_percent = float(progress.get("percent") or 0)
+                self._set_queue_progress(
+                    "downloading",
+                    20 + raw_percent * 0.75,
+                    "Завантажую аудіо у локальну бібліотеку",
+                    track=selected,
+                    downloaded_bytes=progress.get("downloaded_bytes", 0),
+                    total_bytes=progress.get("total_bytes", 0),
+                    speed=progress.get("speed", 0),
+                    eta=progress.get("eta", 0),
+                )
             try:
                 LOGGER.info("LUMEN Downloader searching audio: %s", query)
                 downloaded = self._download_audio_with_lumen(
@@ -2680,6 +2769,7 @@ darkwave чи post-punk: українська та російськомовна 
                     search=True,
                     music_search=True,
                     validator=validator,
+                    progress_callback=download_progress,
                 )
                 info = downloaded.get("info") or {}
                 candidate = accepted or self._download_info_candidate(info)
@@ -2718,6 +2808,9 @@ darkwave чи post-punk: українська та російськомовна 
         title = candidate["recommendation"]["title"]
         track = self.db.add_local_track(artist, title, relative)
         analysis = self._analyze_discovered_audio(prepared, search_plan)
+        self._set_queue_progress(
+            "saving", 97, "Зберігаю метадані треку", track=candidate["query"],
+        )
         duration = float(info.get("duration") or candidate.get("duration") or 0)
         source_id = str(info.get("id") or candidate["id"])
         source_title = str(info.get("title") or candidate["title"])

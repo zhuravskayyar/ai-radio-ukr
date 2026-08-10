@@ -105,6 +105,30 @@
           </div>
           <button id="refreshAiLibrary" class="primary">↻ Оновити AI-бібліотеку</button>
         </div>
+        <div class="libraryDashboard">
+          <article class="libraryMonitor">
+            <div class="monitorHead">
+              <span>ПОШУК І ЗАВАНТАЖЕННЯ</span>
+              <strong id="downloadProgressPercent">0%</strong>
+            </div>
+            <div class="downloadMeter" aria-label="Прогрес завантаження треку">
+              <i id="downloadProgressBar"></i>
+            </div>
+            <p id="downloadProgressText">Очікую на пошук наступного треку</p>
+            <small id="downloadProgressDetails">Автоматичне поповнення бібліотеки ввімкнено</small>
+          </article>
+          <article class="libraryMonitor librarySummary">
+            <div class="monitorHead"><span>ЛОКАЛЬНО ГОТОВО</span><strong id="libraryReadyCount">0</strong></div>
+            <p id="librarySizeText">0 треків · 0 Б</p>
+            <small>Ці файли вже завантажені й можуть відтворюватися без повторного пошуку.</small>
+          </article>
+          <article class="libraryMonitor updateMonitor">
+            <div class="monitorHead"><span>ОНОВЛЕННЯ ПРОГРАМИ</span><strong id="appVersionLabel">—</strong></div>
+            <div class="downloadMeter"><i id="updateProgressBar"></i></div>
+            <p id="updateProgressText">Перевіряю версію…</p>
+            <button id="applyUpdate" class="updateButton" hidden>Встановити оновлення</button>
+          </article>
+        </div>
         <div class="table">
           <div class="tr th"><span>#</span><span>ТРЕК</span><span>ДЖЕРЕЛО</span><span>ТАЙМІНГ</span><span>STORY</span><span>ВИМОВА</span><span></span></div>
           <div id="trackTable"></div>
@@ -150,13 +174,13 @@ OPENROUTER_API_KEY=sk-or-v1-ваш_ключ</pre>
             </label>
             <p class="hint">Після зміни стилю AI-бібліотека перебудується; особистість ведучого Адама Вектора не змінюється.</p>
             <h3>Пошук треків</h3>
-            <label>Дозвіл на джерела
-              <select id="simpleRightsConfirmed" data-setting="licensed_sources_confirmed">
-                <option value="0">Не підтверджено — лише моя локальна музика</option>
-                <option value="1">Підтверджую право завантажувати й відтворювати</option>
+            <label>Автоматичне поповнення бібліотеки
+              <select id="simpleDiscoveryEnabled" data-setting="dynamic_discovery_enabled">
+                <option value="1">Увімкнено</option>
+                <option value="0">Вимкнено — лише локальна музика</option>
               </select>
             </label>
-            <p class="hint">Vector Radio запускає онлайн-пошук лише після вашого підтвердження. Завантажені композиції зберігаються локально; використовуйте тільки джерела, на які маєте право.</p>
+            <p class="hint">Після встановлення патча пошук запускається автоматично. Vector Radio зберігає знайдені композиції локально; використовуйте лише дозволені вам джерела та дотримуйтеся умов відповідних сервісів.</p>
           </article>
           <article>
             <h3>Радіостанція</h3>

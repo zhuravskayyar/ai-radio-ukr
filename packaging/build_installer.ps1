@@ -97,4 +97,9 @@ finally {
     Pop-Location
 }
 
-Write-Host "Installer created: $(Join-Path $projectRoot 'dist\Vector_Radio_Setup_1.0.0.exe')"
+$installerOutput = Join-Path $projectRoot 'dist\Vector_Radio_Setup_1.0.2.exe'
+$installerHash = Get-FileHash -LiteralPath $installerOutput -Algorithm SHA256
+$installerChecksum = "$installerOutput.sha256"
+Set-Content -LiteralPath $installerChecksum -Value "$($installerHash.Hash.ToLower())  $([IO.Path]::GetFileName($installerOutput))" -Encoding ascii
+Write-Host "Installer created: $installerOutput"
+Write-Host "Checksum created: $installerChecksum"

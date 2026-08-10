@@ -9,6 +9,61 @@ from backend.api import RadioAPI
 
 
 class LumenDownloaderIntegrationTests(unittest.TestCase):
+    def test_downloader_reports_safe_byte_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "Track [safe-id].webm"
+            audio_path.write_bytes(b"audio")
+            updates = []
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    info = {
+                        "id": "safe-id",
+                        "title": "Track",
+                        "_filename": str(audio_path),
+                    }
+                    hook = self.options["progress_hooks"][0]
+                    hook({
+                        "status": "downloading",
+                        "downloaded_bytes": 50,
+                        "total_bytes": 100,
+                        "speed": 25,
+                        "eta": 2,
+                    })
+                    hook({
+                        "status": "finished",
+                        "downloaded_bytes": 100,
+                        "total_bytes": 100,
+                        "info_dict": info,
+                    })
+                    return info
+
+                def prepare_filename(self, info):
+                    return info["_filename"]
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                result = lumen_downloader.download_audio_item(
+                    "Artist - Track", directory, progress_callback=updates.append,
+                )
+
+            self.assertEqual(result["path"], audio_path.resolve())
+            self.assertEqual([item["percent"] for item in updates], [50.0, 100.0])
+            self.assertEqual(updates[0]["downloaded_bytes"], 50)
+            self.assertNotIn("info_dict", updates[-1])
+
     def test_downloader_uses_audio_only_without_requiring_ffmpeg(self):
         with tempfile.TemporaryDirectory() as directory:
             args = argparse.Namespace(

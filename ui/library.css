@@ -4,6 +4,96 @@
   vertical-align: top;
 }
 
+.libraryDashboard {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.35fr) minmax(190px, .75fr) minmax(230px, .9fr);
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.libraryMonitor {
+  min-width: 0;
+  padding: 11px 12px;
+  color: var(--ink);
+  background: var(--card);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.monitorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.monitorHead strong {
+  color: var(--red);
+  white-space: nowrap;
+}
+
+.downloadMeter {
+  height: 8px;
+  margin: 9px 0 7px;
+  overflow: hidden;
+  background: #e5d7c1;
+  border: 2px solid var(--ink);
+}
+
+.downloadMeter i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--red);
+  transition: width .25s ease;
+}
+
+.libraryMonitor p {
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryMonitor small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.updateButton {
+  width: 100%;
+  margin-top: 7px;
+  padding: 7px 9px;
+  color: #fff;
+  background: var(--red);
+  border: 2px solid var(--ink);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.updateButton[hidden] { display: none; }
+
+@media (max-width: 1120px) {
+  .libraryDashboard { grid-template-columns: 1fr 1fr; }
+  .updateMonitor { grid-column: 1 / -1; }
+}
+
+@media (max-width: 700px) {
+  .libraryDashboard { grid-template-columns: 1fr; }
+  .updateMonitor { grid-column: auto; }
+}
+
 .loadMore {
   padding: 16px;
   text-align: center;
