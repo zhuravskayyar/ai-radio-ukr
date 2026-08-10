@@ -1,0 +1,33 @@
+﻿Vector Radio — перевірка NVIDIA API
+Дата: 2026-08-10T16:09:28+02:00
+Вхідний TXT: C:\Users\yarik\Desktop\apitest.txt
+Модель: nvidia/nemotron-3-super-120b-a12b
+Знайдено записів ключів: 6
+Унікальних ключів: 5
+Працює: 0/5
+Секретні ключі у звіт не записуються.
+
+API 1: ПОМИЛКА
+HTTP: немає відповіді
+Час: 90.20 с
+Результат: TimeoutError: The read operation timed out
+
+API 2: ПОМИЛКА
+HTTP: немає відповіді
+Час: 90.19 с
+Результат: TimeoutError: The read operation timed out
+
+API 3: ПОМИЛКА
+HTTP: немає відповіді
+Час: 90.20 с
+Результат: TimeoutError: The read operation timed out
+
+API 4: ПОМИЛКА
+HTTP: немає відповіді
+Час: 90.20 с
+Результат: TimeoutError: The read operation timed out
+
+API 5: ПОМИЛКА
+HTTP: немає відповіді
+Час: 90.17 с
+Результат: TimeoutError: The read operation timed out

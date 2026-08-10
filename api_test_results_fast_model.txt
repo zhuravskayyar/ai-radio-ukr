@@ -1,0 +1,33 @@
+﻿Vector Radio — перевірка NVIDIA API
+Дата: 2026-08-10T16:10:35+02:00
+Вхідний TXT: C:\Users\yarik\Desktop\apitest.txt
+Модель: meta/llama-3.1-8b-instruct
+Знайдено записів ключів: 6
+Унікальних ключів: 5
+Працює: 0/5
+Секретні ключі у звіт не записуються.
+
+API 1: ПОМИЛКА
+HTTP: немає відповіді
+Час: 30.23 с
+Результат: TimeoutError: The read operation timed out
+
+API 2: ПОМИЛКА
+HTTP: немає відповіді
+Час: 30.23 с
+Результат: TimeoutError: The read operation timed out
+
+API 3: ПОМИЛКА
+HTTP: 400
+Час: 0.35 с
+Результат: Function id 'e62a4350-2218-4cf5-9262-112432d239f8': DEGRADED function cannot be invoked
+
+API 4: ПОМИЛКА
+HTTP: немає відповіді
+Час: 30.23 с
+Результат: TimeoutError: The read operation timed out
+
+API 5: ПОМИЛКА
+HTTP: немає відповіді
+Час: 30.22 с
+Результат: TimeoutError: The read operation timed out
