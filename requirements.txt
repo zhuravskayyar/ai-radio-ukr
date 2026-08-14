@@ -1,7 +1,7 @@
 pywebview>=5.3
 edge-tts>=7.2
 mutagen>=1.47
-yt-dlp>=2026.7.4
+yt-dlp[default,deno]>=2026.7.4
 tzdata>=2025.2
 # Local Ukrainian StyleTTS2. CPU is supported; CUDA is used automatically when available.
 git+https://github.com/patriotyk/styletts2-inference@105aed29fa1a7698d08d920986890e9bbd03447c

@@ -26,21 +26,25 @@ from backend.voice_director import VoiceDirector
 
 
 class ContextAndPlanningTests(unittest.TestCase):
-    def test_new_broadcast_defaults_are_random_and_host_every_track(self):
+    def test_new_broadcast_defaults_use_editor_selected_fact_links(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = Database(Path(directory) / "radio.db").settings()
             self.assertEqual(settings["rotation"], "random")
-            self.assertEqual(settings["host_every"], "1")
-            self.assertEqual(settings["talk_probability"], "100")
+            self.assertEqual(settings["host_every"], "0")
+            self.assertEqual(settings["talk_probability"], "45")
             self.assertEqual(settings["host_name"], "Адам Вектор")
             self.assertEqual(settings["silence_probability"], "0")
             self.assertEqual(settings["strict_live_ai_host"], "0")
-            self.assertEqual(settings["story_probability"], "100")
+            self.assertEqual(settings["story_probability"], "45")
             self.assertEqual(settings["pregen_depth"], "2")
             self.assertEqual(settings["intro_variants_per_provider"], "2")
             self.assertEqual(settings["rubric_probability"], "12")
-            self.assertEqual(settings["story_every"], "2")
-            self.assertEqual(settings["fact_probability"], "70")
+            self.assertEqual(settings["story_every"], "4")
+            self.assertEqual(settings["fact_probability"], "80")
+            self.assertEqual(
+                set(json.loads(settings["listener_profile"])),
+                {"history", "artist_drama", "music_theory", "strange_facts", "nostalgia", "lyrics"},
+            )
             self.assertEqual(settings["ai_max_tokens"], "1000")
             self.assertEqual(settings["host_ai_provider"], "secondary")
             self.assertEqual(settings["dj_ai_provider"], "parallel")
@@ -308,7 +312,7 @@ class ContextAndPlanningTests(unittest.TestCase):
             })
             self.assertEqual(plan.content_type, "talk")
             self.assertNotIn(plan.structure, {"announce", "mood", "transition"})
-            self.assertIn(plan.length_class, {"short", "medium", "long"})
+            self.assertIn(plan.length_class, {"short", "normal", "feature"})
             self.assertEqual(plan.reaction, "high_energy")
 
     def test_implicit_mood_line_does_not_have_to_repeat_metadata(self):
@@ -379,7 +383,7 @@ class ContextAndPlanningTests(unittest.TestCase):
                 "series_key": "test-song",
                 "episode": 2,
             })
-            db.save_settings({"story_probability": "100"})
+            db.save_settings({"story_probability": "100", "host_every": "1"})
             planner = ContentPlanner(db, random.Random(1))
             context = {
                 "time": {
@@ -422,7 +426,7 @@ class ContextAndPlanningTests(unittest.TestCase):
                 "confidence": "verified",
                 "duration_class": "short",
             })
-            db.save_settings({"story_probability": "100"})
+            db.save_settings({"story_probability": "100", "host_every": "1"})
             planner = ContentPlanner(db, random.Random(1))
             context = {
                 "time": {
@@ -462,7 +466,10 @@ class ContextAndPlanningTests(unittest.TestCase):
                 "confidence": "verified",
                 "duration_class": "short",
             })
-            db.save_settings({"story_probability": "0", "story_every": "4"})
+            db.save_settings({
+                "story_probability": "0", "story_every": "4",
+                "host_every": "1",
+            })
             for offset in range(3):
                 db.add_history({
                     "current_track_id": track["id"],
@@ -511,6 +518,7 @@ class ContextAndPlanningTests(unittest.TestCase):
                 "story_probability": "100",
                 "silence_probability": "0",
                 "rubric_probability": "0",
+                "host_every": "1",
             })
             plan = ContentPlanner(db, random.Random(3)).plan({
                 "time": {
@@ -653,24 +661,24 @@ class VoiceAndTransitionTests(unittest.TestCase):
         self.assertEqual(plan.variant, "full")
         self.assertLess(plan.voice_duration_ms, 14500)
 
-    def test_voice_profile_caps_a_transition_at_ten_seconds(self):
+    def test_voice_profile_caps_a_transition_at_twelve_seconds(self):
         profile = VoiceDirector().profile(
             {"time": {"daypart": "day"}, "personality": {}},
             {"energy": 5},
             24,
         )
-        self.assertEqual(profile.target_seconds, 10.0)
+        self.assertEqual(profile.target_seconds, 12.0)
 
-    def test_story_voice_profile_uses_twenty_to_forty_second_window(self):
+    def test_story_voice_profile_uses_seven_to_forty_five_second_window(self):
         profile = VoiceDirector().profile(
             {"time": {"daypart": "day"}, "personality": {}},
             {"energy": 5},
             60,
             "story",
         )
-        self.assertEqual(profile.target_seconds, 40.0)
-        self.assertEqual(profile.target_words_min, 35)
-        self.assertEqual(profile.target_words_max, 55)
+        self.assertEqual(profile.target_seconds, 45.0)
+        self.assertEqual(profile.target_words_min, 65)
+        self.assertEqual(profile.target_words_max, 80)
 
     def test_transition_director_uses_measured_outro_and_respects_hard_end(self):
         director = TransitionDirector(27)

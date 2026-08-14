@@ -2,8 +2,12 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 # Ensure the repository root is on sys.path when running this test file directly.
@@ -13,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from backend.api import (
     RadioAPI,
+    _chat_completion,
     _openrouter_affordable_tokens,
     _sounds_scripted,
     spoken_word_count,
@@ -20,6 +25,50 @@ from backend.api import (
 
 
 class SecondaryApiTests(unittest.TestCase):
+    def test_openrouter_retries_when_selected_model_requires_reasoning(self):
+        payloads = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "choices": [{"message": {"content": "Готова підводка"}}],
+                }).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            payloads.append(json.loads(request.data.decode("utf-8")))
+            if len(payloads) == 1:
+                body = json.dumps({
+                    "error": {
+                        "message": (
+                            "Reasoning is mandatory for this endpoint and cannot be disabled."
+                        ),
+                    },
+                }).encode("utf-8")
+                raise HTTPError(request.full_url, 400, "Bad Request", {}, BytesIO(body))
+            return FakeResponse()
+
+        spec = {
+            "name": "secondary",
+            "provider_type": "secondary",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "key": "sk-or-test",
+            "model": "openrouter/free",
+        }
+        with patch("backend.api.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _chat_completion(spec, "system", "request", 0.5, 0.9, 128)
+
+        self.assertFalse(result["error"])
+        self.assertEqual(result["candidate"], "Готова підводка")
+        self.assertFalse(payloads[0]["reasoning"]["enabled"])
+        self.assertTrue(payloads[1]["reasoning"]["enabled"])
+
     def test_api_txt_import_validates_stores_and_masks_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             api = RadioAPI(Path(directory))
@@ -421,6 +470,56 @@ api_key="nvapi-extra-three")''',
             self.assertTrue(all(item["provider"] == "deepseek" for item in result["tracks"]))
             self.assertEqual(result["source_provider"], "nvidia")
 
+    def test_generate_top_tracks_runs_all_ten_intros_in_parallel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            fake_plan = {
+                "tracks": [
+                    {"artist": f"Artist {index}", "title": f"Track {index}"}
+                    for index in range(1, 11)
+                ],
+                "provider": "nvidia",
+            }
+            lock = threading.Lock()
+            release = threading.Event()
+            state = {"active": 0, "peak": 0, "started": 0}
+
+            def fake_make_intro(track_id, *args, **kwargs):
+                with lock:
+                    state["active"] += 1
+                    state["started"] += 1
+                    state["peak"] = max(state["peak"], state["active"])
+                    if state["started"] == 10:
+                        release.set()
+                self.assertTrue(release.wait(2), "ten intro jobs did not overlap")
+                time.sleep(0.01)
+                with lock:
+                    state["active"] -= 1
+                return {
+                    "ok": True,
+                    "display_text": f"Intro for track {track_id}",
+                    "provider": "deepseek",
+                    "fallback": False,
+                }
+
+            with patch.object(api, "_queue_search_plan", return_value=fake_plan), \
+                    patch.object(api, "make_intro", side_effect=fake_make_intro):
+                result = api.generate_top_tracks_with_intros(
+                    "modern rock",
+                    limit=10,
+                    intro_style="straight_radio",
+                    intro_seconds=10,
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["passed"], 10)
+            self.assertEqual(len(result["tracks"]), 10)
+            self.assertEqual(state["peak"], 10)
+            self.assertEqual(
+                [item["artist"] for item in result["tracks"]],
+                [f"Artist {index}" for index in range(1, 11)],
+            )
+
     def test_modern_alt_rock_batch_returns_ten_tracks_and_non_scripted_intros(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -524,7 +623,7 @@ api_key="nvapi-extra-three")''',
                     "candidate": (
                         "У ефірі на 11 місці [[NEXT_TRACK]]."
                         if spec["name"] == "nvidia"
-                        else "В ефірі спокійно світиться [[NEXT_TRACK]] для цього вечора."
+                        else "Тиша вечора спокійно підсвічує [[NEXT_TRACK]]."
                     ),
                     "error": "",
                 }

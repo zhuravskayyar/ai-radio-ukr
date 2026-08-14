@@ -37,6 +37,7 @@ from .speech_normalizer import (
 from .transition_director import TransitionDirector
 from .voice_director import VoiceDirector
 from .host_brain import HostBrain
+from .listener_personalization import INTRO_TYPES, normalize_intro_type
 from .radio_queue import RadioQueueManager
 from .broadcast_safety import BroadcastSafety
 from .updater import APP_VERSION, UpdateManager
@@ -47,7 +48,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_AI_MAX_TOKENS = int(DEFAULTS["ai_max_tokens"])
 # Bump this whenever the editorial contract for generated host copy changes.
 # RadioAPI will then discard text and prepared transitions from older prompts.
-HOST_PROMPT_VERSION = "2026-08-10-adam-vector-clock-v2"
+HOST_PROMPT_VERSION = "2026-08-14-fact-editor-personalization-v1"
 
 
 def _normalized_ai_max_tokens(settings=None):
@@ -72,6 +73,7 @@ def _openrouter_affordable_tokens(message):
 def _chat_completion(spec, system_prompt, request_text, temperature, top_p, max_tokens):
     """Call one OpenAI-compatible chat endpoint without leaking its key."""
     is_openrouter = "openrouter.ai" in str(spec.get("url") or "")
+    openrouter_reasoning_required = False
     for attempt in range(2):
         payload = {
             "model": spec["model"],
@@ -87,7 +89,10 @@ def _chat_completion(spec, system_prompt, request_text, temperature, top_p, max_
         if spec.get("provider_type", spec.get("name")) == "nvidia":
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         if is_openrouter:
-            payload["reasoning"] = {"enabled": False, "exclude": True}
+            payload["reasoning"] = {
+                "enabled": openrouter_reasoning_required,
+                "exclude": True,
+            }
         request = urllib.request.Request(
             spec["url"],
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -144,6 +149,14 @@ def _chat_completion(spec, system_prompt, request_text, temperature, top_p, max_
             except Exception:
                 message = ""
             affordable_tokens = _openrouter_affordable_tokens(message or details)
+            if (
+                attempt == 0
+                and is_openrouter
+                and exc.code == 400
+                and "reasoning is mandatory" in str(message or details).casefold()
+            ):
+                openrouter_reasoning_required = True
+                continue
             if (
                 attempt == 0
                 and is_openrouter
@@ -467,6 +480,14 @@ def _ukrainian_copy_warnings(text, allow_time_digits=False):
     for pattern, warning in checks:
         if re.search(pattern, copy, flags=re.IGNORECASE):
             warnings.append(warning)
+    if re.search(
+        r"\b(?:трекі|тіни|рушне|дальше|обі|підігрівані)\b",
+        copy,
+        flags=re.IGNORECASE | re.UNICODE,
+    ):
+        warnings.append("ненормативна або помилкова словоформа")
+    if re.search(r"\b(?:play|stop|next\s+track)\b", copy, flags=re.IGNORECASE):
+        warnings.append("службова команда моделі")
     if re.search(r"[ёыэъЁЫЭЪ]", copy):
         warnings.append("російські літери в українській репліці")
     if re.search(
@@ -506,6 +527,12 @@ def _ukrainian_copy_warnings(text, allow_time_digits=False):
 
 def _contains_weather_reference(text):
     """Detect weather talk that must be explicitly scheduled by the planner."""
+    if re.search(
+        r"\b(?:надвор\w*|тепл\w*|ясн\w*|похмар\w*|хмар\w*|вітр\w*|жар\w*|темні(?:є|шає|ти))\b",
+        text or "",
+        flags=re.IGNORECASE | re.UNICODE,
+    ):
+        return True
     return re.search(
         r"\b(?:погод\w*|температур\w*|градус\w*|спек\w*|спекот\w*|"
         r"жарк\w*|дощ\w*|злив\w*|гроз\w*|сніг\w*|мороз\w*|"
@@ -668,7 +695,20 @@ def persona_fallback_copy(track, current, context, plan):
         return copies.get(rubric, copies["without_context"])
 
     if structure == "announce":
-        return "У центрі цього переходу — [[NEXT_TRACK]]."
+        copies = (
+            "У центрі цього переходу — [[NEXT_TRACK]].",
+            "Коротко й без зайвих пояснень: [[NEXT_TRACK]].",
+            "Слова відступають. У центрі — [[NEXT_TRACK]].",
+            "Один точний анонс перед стартом: [[NEXT_TRACK]].",
+            "Пауза закінчується там, де починається [[NEXT_TRACK]].",
+            "Мікрофон замовкає. Далі — [[NEXT_TRACK]].",
+            "Кілька секунд тиші — і далі [[NEXT_TRACK]].",
+            "Без передмови, але з точним ім'ям: [[NEXT_TRACK]].",
+            "Новий рух цієї музичної лінії — [[NEXT_TRACK]].",
+            "Наступний відрізок ефіру: [[NEXT_TRACK]].",
+        )
+        variant = int((plan or {}).get("fallback_variant") or 0)
+        return copies[variant % len(copies)]
     if structure == "joke":
         return "[[NEXT_TITLE]] — назва, після якої регулятор гучності виглядає підозріло."
     if structure == "listener":
@@ -872,8 +912,22 @@ def story_quality_score(display_text, speech_text, plan, next_track=None):
     emotion_score = 9 if not any(
         phrase in lowered for phrase in legacy_phrases
     ) else 3
-    radio_score = 10 if 3 <= sentence_count <= 5 else 4
-    tts_score = 10 if 35 <= word_count <= 55 and not re.search(r"[A-Za-z]", speech_text or "") else 5
+    length_class = str(plan.get("length_class") or "normal")
+    sentence_bounds = {
+        "short": (1, 2),
+        "normal": (2, 4),
+        "feature": (3, 4),
+    }.get(length_class, (2, 4))
+    planned_word_min = int(plan.get("word_min") or 12)
+    planned_word_max = int(plan.get("word_max") or 80)
+    # Grounded cards may legitimately be shorter than the editorial target;
+    # factual density is preferable to invented padding.
+    safe_word_min = max(8, round(planned_word_min * 0.65))
+    radio_score = 10 if sentence_bounds[0] <= sentence_count <= sentence_bounds[1] else 4
+    tts_score = 10 if (
+        safe_word_min <= word_count <= planned_word_max
+        and not re.search(r"[A-Za-z]", speech_text or "")
+    ) else 5
     final_sentence = sentences[-1].casefold() if sentences else ""
     artist = compact_artist_credit((next_track or {}).get("artist", "")).casefold()
     title = str((next_track or {}).get("title", "")).casefold()
@@ -911,6 +965,7 @@ class RadioAPI:
         self._discovery_plan_context = {"target_mood": [], "avoid": []}
         self.context_engine = ContextEngine(self.db)
         self.content_planner = ContentPlanner(self.db)
+        self.personalization = self.content_planner.personalization
         self.music_knowledge = self.content_planner.knowledge_base
         self.voice_director = VoiceDirector(DEFAULT_TTS_VOICE)
         self.host_brain = HostBrain(self.db, self.content_planner, self.voice_director, self.music_knowledge)
@@ -2195,7 +2250,7 @@ class RadioAPI:
         settings = dict(self.db.settings())
         settings["station_prompt"] = station_style
         search_plan = self._queue_search_plan(settings)
-        results = []
+        jobs = []
         for index, recommendation in enumerate(search_plan["tracks"][:limit], start=1):
             track = self.db.add_local_track(
                 recommendation["artist"], recommendation["title"],
@@ -2204,29 +2259,65 @@ class RadioAPI:
             self.db.update_track(
                 track["id"], library_source="ai-candidate", match_score=0.0,
             )
-            intro = self.make_intro(
-                track["id"],
-                style=intro_style,
-                content_plan={
-                    "content_type": "talk",
-                    "style": intro_style,
-                    "target_seconds": intro_seconds,
-                    "word_min": max(10, round(float(intro_seconds) * 1.8)),
-                    "word_max": max(18, round(float(intro_seconds) * 3.0)),
-                },
-                duration_seconds=intro_seconds,
-                store_track=False,
-            )
-            results.append({
-                "artist": track["artist"],
-                "title": track["title"],
-                "intro": intro.get("display_text", ""),
-                "provider": intro.get("provider", ""),
-            })
+            jobs.append((index, track))
+
+        def generate(job):
+            index, track = job
+            try:
+                intro = self.make_intro(
+                    track["id"],
+                    style=intro_style,
+                    content_plan={
+                        "content_type": "talk",
+                        "style": intro_style,
+                        "target_seconds": intro_seconds,
+                        "word_min": max(10, round(float(intro_seconds) * 1.8)),
+                        "word_max": max(18, round(float(intro_seconds) * 3.0)),
+                    },
+                    duration_seconds=intro_seconds,
+                    store_track=False,
+                )
+                display_text = str(intro.get("display_text") or "").strip()
+                fallback = bool(intro.get("fallback"))
+                intro_ok = bool(intro.get("ok", True)) and bool(display_text)
+                return index, {
+                    "artist": track["artist"],
+                    "title": track["title"],
+                    "intro": display_text,
+                    "provider": intro.get("provider", ""),
+                    "ok": intro_ok,
+                    "fallback": fallback,
+                    "error": intro.get("provider_error") or intro.get("error") or "",
+                }
+            except Exception as exc:
+                return index, {
+                    "artist": track["artist"],
+                    "title": track["title"],
+                    "intro": "",
+                    "provider": "",
+                    "ok": False,
+                    "fallback": False,
+                    "error": str(exc),
+                }
+
+        indexed_results = {}
+        if jobs:
+            with ThreadPoolExecutor(max_workers=min(10, len(jobs))) as executor:
+                futures = {
+                    executor.submit(generate, job): job[0]
+                    for job in jobs
+                }
+                for future in as_completed(futures):
+                    index, result = future.result()
+                    indexed_results[index] = result
+        results = [indexed_results[index] for index, _track in jobs]
+        passed = sum(bool(item.get("ok")) for item in results)
         return {
-            "ok": True,
+            "ok": len(results) == int(limit) and passed == int(limit),
             "station_style": station_style,
             "tracks": results,
+            "passed": passed,
+            "requested": int(limit),
             "source_provider": search_plan.get("provider", ""),
         }
 
@@ -2778,6 +2869,57 @@ darkwave чи post-punk: українська та російськомовна 
         candidate["match_score"] = match_score
         return match_score >= 0.75
 
+    @classmethod
+    def _candidate_matches_artist(cls, candidate, artist):
+        artist_key = cls._normalize_music_text(artist)
+        if not artist_key:
+            return False
+        if any(
+            cls._normalize_music_text(value) == artist_key
+            for value in (
+                candidate.get("artist"),
+                candidate.get("uploader"),
+                candidate.get("channel"),
+            )
+            if str(value or "").strip()
+        ):
+            return True
+        title_parts = re.split(
+            r"\s+(?:-|–|—|\|)\s+|\s*:\s+",
+            str(candidate.get("title") or ""),
+            maxsplit=1,
+        )
+        return bool(
+            len(title_parts) == 2
+            and cls._normalize_music_text(title_parts[0]) == artist_key
+        )
+
+    @classmethod
+    def _canonical_candidate_title(cls, candidate, artist):
+        metadata_title = str(candidate.get("track") or "").strip()
+        if metadata_title:
+            return metadata_title
+        raw_title = html.unescape(str(candidate.get("title") or "")).strip()
+        title_parts = re.split(
+            r"\s+(?:-|–|—|\|)\s+|\s*:\s+",
+            raw_title,
+            maxsplit=1,
+        )
+        if (
+            len(title_parts) == 2
+            and cls._normalize_music_text(title_parts[0])
+            == cls._normalize_music_text(artist)
+        ):
+            raw_title = title_parts[1].strip()
+        raw_title = re.sub(
+            r"\s*[\[(][^\])]*(?:official|audio|video|lyrics?|visuali[sz]er|"
+            r"clip|клип|прем(?:'|’)єра|премьера)[^\])]*[\])]\s*",
+            " ",
+            raw_title,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", raw_title).strip(" -–—|:")
+
     def _analyze_discovered_audio(self, path, search_plan):
         # A downloaded track must become playable immediately. Importing
         # librosa/numba here can compile DSP kernels for minutes and consume
@@ -2802,6 +2944,7 @@ darkwave чи post-punk: українська та російськомовна 
             "artist": html.unescape(str(info.get("artist") or info.get("uploader") or "")),
             "uploader": html.unescape(str(info.get("uploader") or "")),
             "channel": html.unescape(str(info.get("channel") or "")),
+            "track": html.unescape(str(info.get("track") or info.get("alt_title") or "")),
             "duration": info.get("duration"),
         }
 
@@ -2936,6 +3079,15 @@ darkwave чи post-punk: українська та російськомовна 
         excluded_tracks.extend(
             self._playlist_track_refs(settings.get("ai_previous_playlist", "[]"))
         )
+        excluded_track_keys = {
+            (
+                self._normalize_music_text(track.get("artist")),
+                self._normalize_music_text(track.get("title")),
+            )
+            for track in excluded_tracks
+            if str(track.get("artist") or "").strip()
+            and str(track.get("title") or "").strip()
+        }
         source_ids = {
             str(item.get("source_id") or "") for item in history
             if item.get("source_id")
@@ -2963,6 +3115,7 @@ darkwave чи post-punk: українська та російськомовна 
         candidate = None
         downloaded = None
         download_errors = []
+        attempted_artist_fallbacks = set()
         search_plan = {"target_mood": [], "avoid": []}
         refreshed_plan = False
         max_attempts = 16
@@ -3029,8 +3182,13 @@ darkwave чи post-punk: українська та російськомовна 
                     validator=validator,
                     progress_callback=download_progress,
                 )
+                if not accepted:
+                    raise RuntimeError(
+                        "LUMEN Downloader повернув аудіо, яке не пройшло "
+                        "перевірку виконавця та назви"
+                    )
                 info = downloaded.get("info") or {}
-                candidate = accepted or self._download_info_candidate(info)
+                candidate = dict(accepted)
                 candidate.update({
                     "query": query,
                     "recommendation": recommendation,
@@ -3043,6 +3201,79 @@ darkwave чи post-punk: українська та російськомовна 
             except Exception as exc:
                 LOGGER.warning("LUMEN Downloader rejected %s: %s", query, exc)
                 download_errors.append(f"{query}: {exc}")
+                if recommendation_artist in attempted_artist_fallbacks:
+                    continue
+                attempted_artist_fallbacks.add(recommendation_artist)
+
+                artist_accepted = {}
+
+                def artist_validator(info, selected_artist=recommendation["artist"]):
+                    checked = self._download_info_candidate(info)
+                    if not self._queue_candidate_allowed(
+                        checked, settings, blocked_words, source_ids,
+                    ):
+                        return False
+                    if not self._candidate_matches_artist(checked, selected_artist):
+                        return False
+                    canonical_title = self._canonical_candidate_title(
+                        checked, selected_artist,
+                    )
+                    corrected_key = (
+                        self._normalize_music_text(selected_artist),
+                        self._normalize_music_text(canonical_title),
+                    )
+                    if not all(corrected_key) or corrected_key in excluded_track_keys:
+                        return False
+                    checked["canonical_title"] = canonical_title
+                    checked["match_score"] = 0.85
+                    artist_accepted.clear()
+                    artist_accepted.update(checked)
+                    return True
+
+                artist_query = f'{recommendation["artist"]} official audio'
+                self._set_queue_progress(
+                    "searching", 18,
+                    "Уточнюю реальну назву треку цього виконавця",
+                    track=artist_query,
+                )
+                try:
+                    downloaded = self._download_audio_with_lumen(
+                        artist_query,
+                        output_dir,
+                        search=True,
+                        music_search=False,
+                        validator=artist_validator,
+                        progress_callback=lambda progress, selected=artist_query: (
+                            download_progress(progress, selected)
+                        ),
+                    )
+                    if not artist_accepted:
+                        raise RuntimeError(
+                            "резервний результат не пройшов перевірку виконавця"
+                        )
+                    corrected_title = artist_accepted["canonical_title"]
+                    corrected_recommendation = {
+                        **recommendation,
+                        "title": corrected_title,
+                    }
+                    candidate = dict(artist_accepted)
+                    candidate.update({
+                        "query": f'{recommendation["artist"]} - {corrected_title}',
+                        "recommendation": corrected_recommendation,
+                    })
+                    LOGGER.info(
+                        "LUMEN Downloader corrected AI title: %s -> %s - %s",
+                        query, recommendation["artist"], corrected_title,
+                    )
+                    break
+                except Exception as fallback_exc:
+                    LOGGER.warning(
+                        "LUMEN Downloader artist fallback rejected %s: %s",
+                        recommendation["artist"], fallback_exc,
+                    )
+                    download_errors.append(
+                        f'{recommendation["artist"]}: {fallback_exc}'
+                    )
         if not downloaded or not candidate:
             detail = download_errors[-1] if download_errors else "немає нових рекомендацій"
             raise RuntimeError(f"LUMEN Downloader не знайшов відповідний аудіотрек. {detail}")
@@ -3472,8 +3703,9 @@ artist_speech і title_speech мають бути записані україн�
             duration_seconds or plan.get("target_seconds") or settings.get("host_length", 10)
         )
         duration_seconds = (
-            max(20.0, min(40.0, requested_duration))
-            if content_type == "story" else min(10.0, requested_duration)
+            max(7.0, min(45.0, requested_duration))
+            if content_type in {"story", "fact"}
+            else max(3.0, min(12.0, requested_duration))
         )
         if plan.get("target_seconds") != duration_seconds:
             plan = {**plan, "target_seconds": duration_seconds}
@@ -3483,13 +3715,17 @@ artist_speech і title_speech мають бути записані україн�
         short_variant = variant == "short"
         story_mode = content_type == "story"
         if story_mode:
-            sentence_target = 4
-            allowed_sentences = (3, 4, 5)
+            if length_class == "short":
+                sentence_target, allowed_sentences = 2, (1, 2)
+            elif length_class == "feature":
+                sentence_target, allowed_sentences = 4, (3, 4)
+            else:
+                sentence_target, allowed_sentences = 3, (2, 3, 4)
         elif plan.get("content_type") in {
             "top_of_hour", "weather_touch", "weather_change", "fact"
         }:
-            sentence_target = 1
-            allowed_sentences = (1, 2)
+            sentence_target = 1 if length_class == "short" else 2 if length_class == "normal" else 4
+            allowed_sentences = (1, 2) if length_class == "short" else (2, 3) if length_class == "normal" else (3, 4)
         else:
             sentence_target = 2 if duration_seconds >= 9 and not short_variant else 1
             allowed_sentences = (1, 2, 3) if not short_variant else (1,)
@@ -3577,10 +3813,14 @@ artist_speech і title_speech мають бути записані україн�
                     "підтвердження і не посилюй категоричність формулювання."
                 ),
             }.get(story_verification_status, "Не посилюй рівень певності картки.")
+            story_detail_rule = {
+                "short": "гачок і одна конкретна деталь",
+                "feature": "гачок і до трьох конкретних деталей",
+            }.get(length_class, "гачок і одна або дві конкретні деталі")
             story_rules = f"""
 MUSIC STORY MODE:
 Це блок Play Together: живий мінісюжет для рок-ефіру, не лекція й не суха довідка.
-{story_mode_rule} Побудуй усну мініісторію тільки з VERIFIED_STORY_DATA: гачок, дві або три конкретні деталі й природний вихід у пісню. {story_subject_rule}
+{story_mode_rule} Побудуй усну мініісторію тільки з VERIFIED_STORY_DATA: {story_detail_rule} й природний вихід у пісню. {story_subject_rule}
 {story_evidence_rule}
 
 Почни з унікального VERIFIED_STORY_HOOK або найсильнішої конкретної деталі. Не починай із загальної фрази про музику, життя, пам'ять, реальність чи «знайому мелодію». Кожне речення має додавати нову перевірену деталь. Не додавай порожнього морального висновку. Заверши фактичну історію до NEXT-маркера, а потім постав потрібний NEXT-маркер окремим останнім реченням без будь-яких слів поруч: система сама перетворить його на ефірний вихід. Якщо перевірених даних вистачає лише на три сильні речення, не розтягуй їх порожнім четвертим.
@@ -3591,8 +3831,10 @@ MUSIC STORY MODE:
             if plan.get("content_type") in {"fact", "story"}:
                 program_rules = (
                     f"\nФОРМАТ: {settings.get('program_name', 'Play Together')}. "
-                    "Це короткий авторський блок у рок-ефірі: факт або історія має звучати людською мовою, "
-                    "з одним чітким поворотом і природним виходом у пісню.\n"
+                    "Це коротка телевізійна фактова міні-документалка, а не FM-оголошення. "
+                    "Побудуй її як HOOK → VERIFIED FACT → TWIST → TRACK. Якщо перевірені дані "
+                    "не містять окремого повороту, не вигадуй його: нехай поворотом стане сам контекст. "
+                    "Одна підводка — одна історія, від одного до чотирьох речень.\n"
                 )
             serious_mode_rule = (
                 "\nСЕРЙОЗНИЙ РЕЖИМ АКТИВНИЙ: тема чутлива. Повністю вимкни гумор, "
@@ -3615,11 +3857,11 @@ MENTION_POLICY нижче. Не нумеруй треки й не подавай
 
 НОВА РЕДАКЦІЙНА МОДЕЛЬ ({HOST_PROMPT_VERSION}): не наслідуй старі підводки й не збирай репліку з готових радіоформул. Починай із конкретної думки, образу або переданого факту саме цього переходу. Фрази з RECENT_OPENINGS і RECENT_STRUCTURES — негативні приклади, а не матеріал для перефразування. Не використовуй абстрактний вступ чи порожній підсумок. Окремий технічний NEXT-маркер дозволений лише в MUSIC STORY MODE і не є текстом для ефіру.
 
-ДОВЖИНА: орієнтуйся на приблизно {length:.1f} секунди, але не рахуй слова механічно. Для звичайної підводки — одне або два живі речення; бажана ціль — {sentence_target}. Для музичної історії — від трьох до п'яти змістовних речень. Не стискай думку до телеграфного оголошення, якщо є місце для нормальної людської фрази.
+ДОВЖИНА: орієнтуйся на приблизно {length:.1f} секунди, але не рахуй слова механічно. Для звичайної підводки — одне або два живі речення; бажана ціль — {sentence_target}. Для факту або музичної історії — від одного до чотирьох змістовних речень відповідно до класу довжини. Не стискай думку до телеграфного оголошення, якщо є місце для нормальної людської фрази.
 
 ГУМОР: максимум один основний жарт. Гумор сухий, природний, іноді самоіронічний. Не пояснюй жарт і не намагайся бути смішним у кожному реченні. Не вигадуй особистого досвіду ведучого.
 
-НЕ ВЖИВАЙ: «чесно кажучи», «ця композиція точно», «він заслужив увагу», «а ось і», «неймовірний хіт», «легендарний хіт», «пориньмо», «іноді музика виростає з реального життя», «за знайомою мелодією буває інша реальність», «так музика залишає свій слід», «і це лишається з нами», «а зараз в ефірі», банальні мотиваційні фрази, пафос і довгі вступи. Не став більше одного риторичного питання. Не повторюй автоматично жарти про каву.
+НЕ ПОЧИНАЙ словами «А зараз», «Наступна композиція», «Цікаво знати», «Друзі» або «В ефірі». НЕ ВЖИВАЙ: «чесно кажучи», «ця композиція точно», «він заслужив увагу», «а ось і», «неймовірний хіт», «легендарний хіт», «пориньмо», «іноді музика виростає з реального життя», «за знайомою мелодією буває інша реальність», «так музика залишає свій слід», «і це лишається з нами», «а зараз в ефірі», банальні мотиваційні фрази, пафос і довгі вступи. Не став більше одного риторичного питання. Не повторюй автоматично жарти про каву.
 
 ФАКТИ: про пісню або виконавця фактичне твердження дозволене лише з VERIFIED_FACT або VERIFIED_STORY_DATA. Час і погоду можна брати тільки з CONTEXT_JSON і лише коли цього просить CONTENT DIRECTOR. Якщо даних немає, не здогадуйся. Не говори про релізи, альбоми, жанр, популярність, музичні списки чи біографію без перевірених даних. Не приписуй виконавцю думок або дій.
 
@@ -3633,6 +3875,7 @@ MENTION_POLICY нижче. Не нумеруй треки й не подавай
 
 STYLE цього запиту: {style}. Напрям: {STYLE_GUIDANCE[style]}.
 СТРУКТУРА: {structure}. Не повторюй структури з RECENT_STRUCTURES.
+ТИП ПІДВОДКИ: {plan.get('intro_type') or 'listener_context'}. Це редакторське рішення; не змінюй тип і не змішуй кілька сюжетів.
 MENTION_POLICY: {mention_policy}.
 КЛАС ДОВЖИНИ: {length_class}. Підлаштуй природний темп репліки під доступний час, без підрахунку слів у тексті.
 ФАЗА ЕФІРУ: {plan.get('session_phase') or context.get('session', {}).get('phase', 'flow')}.
@@ -3691,6 +3934,9 @@ NEXT_TITLE:
 
 VERIFIED_FACT:
 {(verified_fact or '').strip()}
+
+VERIFIED_FACT_SOURCE:
+{json.dumps(plan.get('fact_source', {}), ensure_ascii=False)}
 
 VERIFIED_STORY_DATA:
 {json.dumps([normalize_linguistic(str(item)) for item in plan.get('story_data', [])], ensure_ascii=False)}
@@ -3786,6 +4032,9 @@ CONTEXT_JSON:
                 "поїхали", "музика все скаже сама", "просто слухаємо далі",
                 "тепер слухаємо", "зараз слухаємо", "йдемо далі", "рухаємося далі",
             )
+            forbidden_openings = (
+                "а зараз", "наступна композиція", "цікаво знати", "друзі", "в ефірі",
+            )
             valid_candidates = []
             errors = []
             next_markers = ("[[NEXT_TRACK]]", "[[NEXT_ARTIST]]", "[[NEXT_TITLE]]")
@@ -3876,6 +4125,8 @@ CONTEXT_JSON:
                     candidate_error = "репліка не вміщується у доступний ефірний час"
                 elif candidate.count("?") > 1:
                     candidate_error = "забагато риторичних питань"
+                elif candidate.casefold().lstrip(" \t\r\n«\"'—–-.,:;!?").startswith(forbidden_openings):
+                    candidate_error = "заборонений початок підводки"
                 elif any(phrase in lowered for phrase in banned):
                     candidate_error = "заборонений радіоштамп"
                 elif _sounds_scripted(candidate):
@@ -3938,6 +4189,7 @@ CONTEXT_JSON:
                 "погода не запланована для цієї підводки",
                 "час не запланований для цієї підводки",
                 "заборонений радіоштамп",
+                "заборонений початок підводки",
                 "заскриптована підводка",
                 "додано деталь поза VERIFIED_STORY_DATA",
                 "неправильна кількість речень",
@@ -4236,6 +4488,7 @@ CONTEXT_JSON:
                 "mention_policy": content_plan.mention_policy,
                 "length_class": content_plan.length_class,
                 "rubric": content_plan.rubric,
+                "intro_type": content_plan.intro_type,
                 "opening": "",
                 "display_text": "",
                 "created_at": now.isoformat(),
@@ -4397,6 +4650,7 @@ CONTEXT_JSON:
             "mention_policy": content_plan.mention_policy,
             "length_class": content_plan.length_class,
             "rubric": content_plan.rubric,
+            "intro_type": content_plan.intro_type,
             "opening": first_phrase(display_full),
             "display_text": display_full,
             "created_at": prepared_at.isoformat(),
@@ -4593,6 +4847,7 @@ CONTEXT_JSON:
                 plan = json.loads(transition.get("plan_json") or "{}")
             except (TypeError, json.JSONDecodeError):
                 plan = {}
+            self.db.add_listener_exposure(transition, plan, aired.isoformat())
             comparison_time = plan.get("hard_time") or transition.get("scheduled_for")
             timing_error = None
             timing_status = "aired"
@@ -4622,6 +4877,41 @@ CONTEXT_JSON:
             )
         return {"ok": True}
 
+    def record_listener_feedback(
+        self, track_id, action, listened_seconds=0, duration_seconds=0,
+    ):
+        action = str(action or "").strip().casefold()
+        if action not in {"skip", "listened", "complete"}:
+            return {"ok": False, "error": "Невідомий тип реакції слухача"}
+        try:
+            listened = max(0.0, float(listened_seconds or 0))
+            duration = max(0.0, float(duration_seconds or 0))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Некоректна тривалість прослуховування"}
+        ratio = min(1.0, listened / duration) if duration > 0 else (
+            1.0 if action == "complete" else 0.0
+        )
+        exposure = self.db.resolve_listener_exposure(
+            int(track_id), action, listened, ratio,
+            datetime.now(timezone.utc).isoformat(),
+        )
+        if not exposure:
+            return {
+                "ok": True,
+                "recorded": False,
+                "listener_profile": self.personalization.profile(),
+            }
+        profile = self.personalization.update(
+            exposure.get("intro_type", ""), action, ratio,
+        )
+        return {
+            "ok": True,
+            "recorded": True,
+            "intro_type": exposure.get("intro_type", ""),
+            "completion_ratio": round(ratio, 4),
+            "listener_profile": profile,
+        }
+
     def set_track_analysis(self, track_id, values):
         allowed = {
             "duration_ms", "bpm", "energy", "mood", "genre", "intro_end_ms",
@@ -4633,7 +4923,10 @@ CONTEXT_JSON:
         self.db.update_track(int(track_id), **payload)
         return {"ok": True, "track": self.db.track(int(track_id))}
 
-    def add_track_fact(self, track_id, fact, verified=False):
+    def add_track_fact(
+        self, track_id, fact, verified=False, intro_type="music_fact",
+        source_url="", source_title="",
+    ):
         if not self.db.track(int(track_id)):
             return {"ok": False, "error": "Трек не знайдено"}
         fact = (fact or "").strip()
@@ -4641,7 +4934,18 @@ CONTEXT_JSON:
             return {"ok": False, "error": "Факт порожній"}
         if len(split_spoken_sentences(fact)) > 1:
             return {"ok": False, "error": "Факт має бути одним реченням"}
-        self.db.add_fact(int(track_id), fact, bool(verified))
+        intro_type = normalize_intro_type(intro_type, "")
+        if intro_type not in INTRO_TYPES:
+            return {"ok": False, "error": "Невідомий тип факту"}
+        source_url = str(source_url or "").strip()
+        if bool(verified) and not source_url:
+            return {"ok": False, "error": "Перевірений факт потребує HTTP(S) джерела"}
+        if source_url and not re.match(r"^https?://", source_url, re.IGNORECASE):
+            return {"ok": False, "error": "Джерело факту має бути повним HTTP(S) URL"}
+        self.db.add_fact(
+            int(track_id), fact, bool(verified), intro_type,
+            source_url, str(source_title or "").strip(),
+        )
         self.db.invalidate_transitions_for_track(int(track_id))
         return {"ok": True, "facts": self.db.facts_for_track(int(track_id), False)}
 

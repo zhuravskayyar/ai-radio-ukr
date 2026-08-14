@@ -133,14 +133,153 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 music_search=True,
                 candidates=5,
             )
-            options = lumen_downloader.build_options(args)
+            with patch.object(
+                lumen_downloader, "find_javascript_runtime",
+                return_value=r"C:\Vector Radio\runtime\Scripts\deno.exe",
+            ):
+                options = lumen_downloader.build_options(args)
 
         self.assertEqual(options["default_search"], "ytsearch5")
         self.assertEqual(options["playlist_items"], "1-5")
         self.assertTrue(options["geo_bypass"])
-        self.assertTrue(options["allow_unplayable_formats"])
-        self.assertTrue(options["nocheckcertificate"])
-        self.assertTrue(options["no_warnings"])
+        self.assertEqual(options["age_limit"], 17)
+        self.assertEqual(
+            options["js_runtimes"],
+            {"deno": {"path": r"C:\Vector Radio\runtime\Scripts\deno.exe"}},
+        )
+        self.assertNotIn("allow_unplayable_formats", options)
+        self.assertNotIn("nocheckcertificate", options)
+
+    def test_search_skips_unavailable_results_and_does_not_use_music_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "Track [safe-id].webm"
+            audio_path.write_bytes(b"audio")
+            targets = []
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    targets.append(target)
+                    if self.options["ignoreerrors"] is not True:
+                        raise AssertionError("search must skip inaccessible entries")
+                    if len(targets) == 1:
+                        raise RuntimeError("Sign in to confirm your age")
+                    info = {
+                        "id": "safe-id",
+                        "title": "Artist - Track",
+                        "_filename": str(audio_path),
+                    }
+                    return info
+
+                def prepare_filename(self, info):
+                    return info["_filename"]
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                result = lumen_downloader.download_audio_item(
+                    "Artist - Track", directory, search=True, music_search=True,
+                )
+
+            self.assertEqual(result["path"], audio_path.resolve())
+            self.assertEqual(targets[:2], [
+                "Artist - Track",
+                "Artist - Track official audio",
+            ])
+            self.assertFalse(any("music.youtube.com" in target for target in targets))
+
+    def test_age_restricted_failure_is_reported_as_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    self.options["logger"].error(
+                        "ERROR: Sign in to confirm your age",
+                    )
+                    return {"entries": []}
+
+                def prepare_filename(self, info):
+                    return ""
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "віково обмежений результат пропущено",
+                ):
+                    lumen_downloader.download_audio_item(
+                        "Artist - Track", directory,
+                        search=True, music_search=True,
+                    )
+
+    def test_rejected_search_result_cannot_reuse_an_old_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_audio = Path(directory) / "Different Song [old-id].mp3"
+            old_audio.write_bytes(b"old-audio")
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    info = {
+                        "id": "old-id",
+                        "title": "Different Song",
+                        "_filename": str(old_audio),
+                    }
+                    match_filter = self.options["match_filter"]
+                    self.assert_rejected(match_filter(info, incomplete=False))
+                    return info
+
+                @staticmethod
+                def assert_rejected(value):
+                    if not value:
+                        raise AssertionError("candidate should have been rejected")
+
+                def prepare_filename(self, info):
+                    return info["_filename"]
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "не пройшли перевірку",
+                ):
+                    lumen_downloader.download_audio_item(
+                        "Artist - Track", directory,
+                        search=True, music_search=True,
+                        validator=lambda _info: False,
+                    )
+
+            self.assertEqual(old_audio.read_bytes(), b"old-audio")
 
     def test_radio_resolve_downloads_and_saves_a_local_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -259,8 +398,62 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
             ):
                 track = api._discover_queue_track([])
 
-            self.assertEqual(calls, ["Fake Artist - Fake Song", "Linkin Park - Numb"])
+            self.assertEqual(calls, [
+                "Fake Artist - Fake Song",
+                "Fake Artist official audio",
+                "Linkin Park - Numb",
+            ])
             self.assertEqual((track["artist"], track["title"]), ("Linkin Park", "Numb"))
+
+    def test_discovery_corrects_fake_title_with_real_track_by_same_artist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = RadioAPI(root)
+            api.db.save_settings({
+                "dynamic_discovery_enabled": "1",
+                "licensed_sources_confirmed": "1",
+            })
+            audio_path = root / "downloads" / "queue" / "Numb [official].webm"
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            audio_path.write_bytes(b"local-audio")
+            info = {
+                "id": "official",
+                "title": "Linkin Park - Numb (Official Music Video)",
+                "artist": "Linkin Park",
+                "uploader": "Linkin Park",
+                "duration": 187,
+                "webpage_url": "https://example.test/official",
+            }
+            plan = {
+                "tracks": [{"artist": "Linkin Park", "title": "Imaginary Song"}],
+                "similar_tracks": [],
+                "backup_tracks": [],
+                "target_mood": ["alt rock"],
+                "avoid": [],
+            }
+            calls = []
+
+            def fake_download(item, output_dir, **kwargs):
+                calls.append(item)
+                if len(calls) == 1:
+                    raise RuntimeError("no exact result")
+                self.assertEqual(item, "Linkin Park official audio")
+                self.assertFalse(kwargs["music_search"])
+                self.assertTrue(kwargs["validator"](info))
+                return {"path": audio_path, "info": info}
+
+            with patch.object(api, "_queue_search_plan", return_value=plan), patch.object(
+                api, "_download_audio_with_lumen", side_effect=fake_download,
+            ):
+                track = api._discover_queue_track([])
+
+            self.assertEqual(calls, [
+                "Linkin Park - Imaginary Song",
+                "Linkin Park official audio",
+            ])
+            self.assertEqual((track["artist"], track["title"]), ("Linkin Park", "Numb"))
+            self.assertEqual(track["youtube_id"], "official")
+            self.assertGreaterEqual(track["match_score"], 0.8)
 
     def test_discovery_reuses_one_ai_plan_for_multiple_downloaded_tracks(self):
         with tempfile.TemporaryDirectory() as directory:

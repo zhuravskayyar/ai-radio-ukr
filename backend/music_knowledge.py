@@ -3,6 +3,8 @@ import json
 import re
 from datetime import datetime, timezone
 
+from .listener_personalization import intro_type_for_story_category
+
 
 STORY_CATEGORIES = (
     "SONG_ORIGIN",
@@ -23,9 +25,9 @@ STORY_CATEGORIES = (
 )
 
 DURATION_SECONDS = {
-    "short": 20.0,
-    "normal": 25.0,
-    "feature": 30.0,
+    "short": 10.0,
+    "normal": 20.0,
+    "feature": 37.5,
 }
 
 STORY_MODES = {
@@ -272,8 +274,18 @@ class MusicKnowledgeBase:
             for row in self.db.stories_for_track(int(track_id), verified_only)
         ]
 
-    def select(self, track_id):
+    def select(self, track_id, excluded_intro_types=(), intro_type_scores=None):
         cards = self.cards_for_track(track_id, verified_only=True)
+        if not cards:
+            return None
+        excluded = {str(value or "").casefold() for value in excluded_intro_types}
+        scores = intro_type_scores or {}
+        for card in cards:
+            card["intro_type"] = intro_type_for_story_category(card.get("category"))
+        cards = [
+            card for card in cards
+            if card.get("intro_type") not in excluded
+        ]
         if not cards:
             return None
         verification_priority = {
@@ -283,6 +295,7 @@ class MusicKnowledgeBase:
         }
         cards.sort(key=lambda card: (
             verification_priority.get(card.get("verification_status"), 9),
+            -float(scores.get(card.get("intro_type"), 0.5)),
             int(card.get("use_count") or 0),
             str(card.get("last_used_at") or ""),
             int(card.get("episode") or 0),

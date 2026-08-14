@@ -10,6 +10,7 @@ from backend.api import (
     INTRO_STYLES,
     RadioAPI,
     _canonicalize_verified_track_mentions,
+    _contains_weather_reference,
     _contains_unmarked_track_credit,
     _replace_track_markers,
     _replace_story_reveal,
@@ -19,6 +20,7 @@ from backend.api import (
     _ukrainian_copy_warnings,
     contextual_fallback_copy,
     fallback_intro_copy,
+    persona_fallback_copy,
     split_spoken_sentences,
     spoken_word_count,
 )
@@ -223,6 +225,23 @@ class SpeechNormalizerTests(unittest.TestCase):
             "В ефірі спокійно світиться наступний трек."
         ))
 
+    def test_copy_audit_rejects_service_commands_and_indirect_weather(self):
+        self.assertIn(
+            "службова команда моделі",
+            _ukrainian_copy_warnings("Треки йдуть хвилями. PLAY."),
+        )
+        self.assertIn(
+            "ненормативна або помилкова словоформа",
+            _ukrainian_copy_warnings("Трекі звучать рушне, а дальше буде гучніше."),
+        )
+        for copy in (
+            "Надворі вже темніє.",
+            "Тепло й ясно — час для музики.",
+            "У цій жарі хочеться тіні.",
+        ):
+            with self.subTest(copy=copy):
+                self.assertTrue(_contains_weather_reference(copy))
+
     def test_long_collaboration_credit_is_compact_and_deduplicated(self):
         track = {
             "artist": "Witchz, Michael Lattino, Michael Lattino, LIONZDEN, kvltmvthr",
@@ -294,6 +313,33 @@ class SpeechNormalizerTests(unittest.TestCase):
 
 
 class RadioCopyTests(unittest.TestCase):
+    def test_parallel_acceptance_has_ten_distinct_announce_fallbacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            current, track = api.db.tracks()[:2]
+            context = api.context_engine.snapshot(current, track)
+            copies = []
+            for variant in range(10):
+                plan = {
+                    "content_type": "talk",
+                    "structure": "announce",
+                    "mention_policy": "artist_and_title",
+                    "fallback_variant": variant,
+                }
+                copy = persona_fallback_copy(track, current, context, plan)
+                display = _replace_track_markers(copy, track, current)
+                accepted, error = api.content_planner.quality_gate(
+                    display,
+                    track,
+                    context,
+                    mention_policy="artist_and_title",
+                    structure="announce",
+                )
+                self.assertTrue(accepted, error)
+                copies.append(display)
+
+            self.assertEqual(len(set(copies)), 10)
+
     def setUp(self):
         self.track = {
             "rank": 11,
@@ -679,7 +725,7 @@ class RadioCopyTests(unittest.TestCase):
                 candidate = (
                     "У ефірі на 11 місці тихо світиться [[NEXT_TRACK]]."
                     if spec["name"] == "nvidia"
-                    else "В ефірі спокійно світиться [[NEXT_TRACK]] для цього вечора."
+                    else "Тиша вечора спокійно підсвічує [[NEXT_TRACK]]."
                 )
                 return {
                     "provider": spec["name"],

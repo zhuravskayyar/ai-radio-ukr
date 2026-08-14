@@ -13,7 +13,6 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
 
 
 LOGGER = logging.getLogger("lumen.downloader")
@@ -123,6 +122,23 @@ def find_ffmpeg_location() -> str | None:
     return str(matches[0].parent) if matches else None
 
 
+def find_javascript_runtime() -> str | None:
+    """Find the private Deno installed with Vector Radio or a system copy."""
+    candidates = [
+        shutil.which('deno'),
+        Path(sys.executable).with_name('deno.exe'),
+        Path(__file__).resolve().parent / 'runtime' / 'Scripts' / 'deno.exe',
+        Path(__file__).resolve().parent / 'runtime' / 'deno.exe',
+    ]
+    for value in candidates:
+        if not value:
+            continue
+        path = Path(value)
+        if path.is_file():
+            return str(path.resolve())
+    return None
+
+
 def build_options(args, progress_hook=None, logger=None):
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -148,13 +164,16 @@ def build_options(args, progress_hook=None, logger=None):
         'socket_timeout': 30,
         'concurrent_fragment_downloads': 4,
         'windowsfilenames': True,
-        'allow_unplayable_formats': True,
         'geo_bypass': True,
-        'nocheckcertificate': True,
-        'no_warnings': True,
         'youtube_include_dash_manifest': True,
-        'http_chunk_size': 10485760,
+        # The radio does not need age-restricted sources. yt-dlp skips any
+        # result marked 18+ instead of asking for browser cookies.
+        'age_limit': 17,
     }
+
+    javascript_runtime = find_javascript_runtime()
+    if javascript_runtime:
+        opts['js_runtimes'] = {'deno': {'path': javascript_runtime}}
 
     if search_mode:
         # Перевіряємо кілька результатів і беремо перший доступний трек,
@@ -162,11 +181,9 @@ def build_options(args, progress_hook=None, logger=None):
         # yt-dlp підтримує ytsearchN, але не підтримує псевдосхему ytmsearchN.
         opts['default_search'] = f'ytsearch{candidates}'
         opts['playlist_items'] = f'1-{candidates}'
-        opts['playlistend'] = candidates
         opts['max_downloads'] = 1
     else:
         opts['playlist_items'] = f'1-{args.limit}'
-        opts['playlistend'] = args.limit
         opts['max_downloads'] = args.limit
 
     if args.cookies:
@@ -205,6 +222,58 @@ def build_options(args, progress_hook=None, logger=None):
             opts['ffmpeg_location'] = ffmpeg_location
 
     return opts
+
+
+class _AttemptLogger:
+    """Forward yt-dlp output while retaining concise failure diagnostics."""
+
+    def __init__(self, logger):
+        self.logger = logger
+        self.errors: list[str] = []
+
+    def debug(self, message):
+        self.logger.debug(message)
+
+    def info(self, message):
+        self.logger.info(message)
+
+    def warning(self, message):
+        self.logger.warning(message)
+
+    def error(self, message):
+        value = str(message or '').strip()
+        if value:
+            self.errors.append(value)
+        self.logger.error(message)
+
+
+def _friendly_download_error(value: object) -> str:
+    text = str(value or '').strip()
+    lowered = text.casefold()
+    if not text:
+        return ''
+    if 'confirm your age' in lowered or 'age restricted' in lowered:
+        return 'віково обмежений результат пропущено'
+    if 'http error 403' in lowered or '403: forbidden' in lowered:
+        return 'YouTube відхилив завантаження (HTTP 403)'
+    if 'video is not available' in lowered or 'this video is unavailable' in lowered:
+        return 'відео недоступне'
+    if 'private video' in lowered:
+        return 'приватне відео пропущено'
+    return re.sub(r'^ERROR:\s*', '', text, flags=re.IGNORECASE)[:240]
+
+
+def _search_targets(item: str, music_search: bool) -> list[str]:
+    if not music_search:
+        return [item]
+    # YouTube Music search pages are not directly supported by yt-dlp and can
+    # redirect to an unrelated channel or album. Keep all retries in ordinary
+    # YouTube search, where inaccessible entries can be skipped safely.
+    return list(dict.fromkeys([
+        item,
+        f'{item} official audio',
+        f'{item} topic',
+    ]))
 
 
 def is_download_limit_error(exc: Exception) -> bool:
@@ -262,11 +331,13 @@ def _downloaded_audio_path(info, ydl, output_dir: Path) -> Path | None:
             return path.resolve()
 
     media_id = str((info or {}).get('id') or '')
+    if not media_id:
+        return None
     matches = [
         path for path in output_dir.rglob('*')
         if path.is_file()
         and path.suffix.casefold() in AUDIO_EXTENSIONS
-        and (not media_id or f'[{media_id}]' in path.name)
+        and f'[{media_id}]' in path.name
     ]
     return max(matches, key=lambda path: path.stat().st_mtime).resolve() if matches else None
 
@@ -304,15 +375,14 @@ def download_audio_item(
         music_search=bool(music_search),
         candidates=max(1, int(candidates)),
     )
-    targets = [item]
-    if search and music_search:
-        # A normal ytsearch is faster and still downloads audio-only. Keep the
-        # YouTube Music page as a fallback for regional search differences.
-        targets = [item, f'https://music.youtube.com/search?q={quote_plus(item)}']
+    targets = _search_targets(item, bool(search and music_search))
 
     last_error: Exception | None = None
+    failure_details: list[str] = []
     for target in targets:
         completed_infos = []
+        filter_rejections: list[str] = []
+        validated_media_ids: set[str] = set()
 
         def capture_progress(data):
             status = str(data.get('status') or '')
@@ -336,8 +406,12 @@ def download_audio_item(
             if data.get('status') == 'finished' and isinstance(data.get('info_dict'), dict):
                 completed_infos.append(data['info_dict'])
 
-        opts = build_options(args, progress_hook=capture_progress, logger=LOGGER)
-        opts['ignoreerrors'] = False
+        attempt_logger = _AttemptLogger(LOGGER)
+        opts = build_options(args, progress_hook=capture_progress, logger=attempt_logger)
+        # Search playlists must continue after a private, age-restricted,
+        # unavailable, or HTTP 403 result. A direct URL should still surface
+        # its extraction failure immediately.
+        opts['ignoreerrors'] = bool(search)
         opts['noplaylist'] = not search
         base_filter = opts.get('match_filter')
         if validator:
@@ -345,9 +419,17 @@ def download_audio_item(
                 if base_filter:
                     rejected = base_filter(info, incomplete=incomplete)
                     if rejected:
+                        if not incomplete:
+                            filter_rejections.append(str(rejected))
                         return rejected
                 if not incomplete and not validator(info):
-                    return 'Результат не збігається з виконавцем і назвою треку'
+                    reason = 'результат не збігається з виконавцем і назвою треку'
+                    filter_rejections.append(reason)
+                    return reason
+                if not incomplete:
+                    media_id = str(info.get('id') or '').strip()
+                    if media_id:
+                        validated_media_ids.add(media_id)
                 return None
 
             opts['match_filter'] = validated_filter
@@ -358,6 +440,8 @@ def download_audio_item(
                 payload = ydl.extract_info(target, download=True)
                 infos = [*completed_infos, *_media_infos(payload)]
                 for info in reversed(infos):
+                    if validator and str(info.get('id') or '') not in validated_media_ids:
+                        continue
                     path = _downloaded_audio_path(info, ydl, output_dir)
                     if path:
                         return {'path': path, 'info': info}
@@ -369,15 +453,33 @@ def download_audio_item(
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     for info in reversed(completed_infos):
+                        if validator and str(info.get('id') or '') not in validated_media_ids:
+                            continue
                         path = _downloaded_audio_path(info, ydl, output_dir)
                         if path:
                             return {'path': path, 'info': info}
             except Exception:
                 pass
-            if not is_download_limit_error(exc):
-                continue
+            friendly = _friendly_download_error(exc)
+            if friendly and friendly not in failure_details:
+                failure_details.append(friendly)
 
-    details = f': {last_error}' if last_error else ''
+        for message in attempt_logger.errors:
+            friendly = _friendly_download_error(message)
+            if friendly and friendly not in failure_details:
+                failure_details.append(friendly)
+        if filter_rejections:
+            detail = 'результати не пройшли перевірку назви, виконавця або доступності'
+            if detail not in failure_details:
+                failure_details.append(detail)
+
+    if not failure_details and last_error:
+        friendly = _friendly_download_error(last_error)
+        if friendly:
+            failure_details.append(friendly)
+    if not failure_details:
+        failure_details.append('YouTube не повернув доступного аудіо')
+    details = ': ' + '; '.join(failure_details[-3:])
     raise RuntimeError(f'LUMEN Downloader не завантажив локальний аудіофайл{details}')
 
 
@@ -393,12 +495,9 @@ def run_downloads(items, args, progress_hook=None, logger=None, item_hook=None):
         if item_hook:
             item_hook(index, len(items[:args.limit]), query)
 
-        # Для YouTube Music використовуємо справжній HTTPS search URL.
-        # Якщо він недоступний, автоматично повторюємо через звичайний ytsearch.
-        targets = [query]
-        if getattr(args, 'music_search', False):
-            music_url = f'https://music.youtube.com/search?q={quote_plus(query)}'
-            targets = [music_url, query]
+        targets = _search_targets(
+            query, bool(getattr(args, 'music_search', False)),
+        )
 
         last_error: Exception | None = None
         success = False

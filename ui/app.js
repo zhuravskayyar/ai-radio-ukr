@@ -148,8 +148,8 @@ function ensureCharacterSettings() {
       ['host_energy', 'Енергійність', 0, 100, 1],
       ['host_conversational', 'Розмовність', 0, 100, 1],
       ['host_facts', 'Факти', 0, 100, 1],
-      ['talk_probability', 'Голосових переходів', 0, 100, 1],
-      ['silence_probability', 'Свідомих пауз', 0, 20, 1],
+      ['talk_probability', 'Треків із голосом', 0, 100, 1],
+      ['silence_probability', 'Додаткових пауз', 0, 100, 1],
       ['rubric_probability', 'Рідкісних рубрик', 0, 20, 1],
       ['story_probability', 'Музичних історій', 0, 100, 1],
       ['story_every', 'STORY не рідше ніж', 2, 8, 1],
@@ -175,6 +175,15 @@ function ensureCharacterSettings() {
           </select>
         </label>
         <p class="hint">Адам Вектор — відкрито цифровий ведучий: допитливий, точний і сухо самоіронічний. Він має музичний смак, не вигадує людського досвіду, а на чутливих темах одразу вимикає гумор.</p>
+      </article>`);
+  }
+
+  if (!$('#personalizationSettings')) {
+    $('.settingsGrid').insertAdjacentHTML('beforeend', `
+      <article id="personalizationSettings">
+        <h3>Персональний редактор</h3>
+        <p id="listenerProfileSummary" class="hint"></p>
+        <p class="hint">Профіль повільно змінюється після завершення або раннього пропуску треку. Він впливає лише на вибір перевірених сюжетів, а не дозволяє AI вигадувати факти.</p>
       </article>`);
   }
 
@@ -441,6 +450,7 @@ function fillSettings() {
     });
     updateSettingOutput(key, value);
   });
+  renderListenerProfile();
   $('#volume').value = programVolume();
   const stationTitle = $('#stationTitle');
   if (stationTitle) stationTitle.textContent = state.settings.station_name;
@@ -494,6 +504,29 @@ function fillSettings() {
       : '● Буфер працює з локальної резервної бібліотеки';
   }
   renderSafetyStatus();
+}
+
+function renderListenerProfile(profile = null) {
+  const output = $('#listenerProfileSummary');
+  if (!output) return;
+  if (!profile) {
+    try {
+      profile = JSON.parse(state.settings.listener_profile || '{}');
+    } catch (_error) {
+      profile = {};
+    }
+  }
+  const labels = {
+    history: 'історія',
+    artist_drama: 'історії артистів',
+    music_theory: 'звук і запис',
+    strange_facts: 'дивні факти',
+    nostalgia: 'епоха й ностальгія',
+    lyrics: 'сенс текстів',
+  };
+  output.textContent = Object.entries(labels)
+    .map(([key, label]) => `${label}: ${Math.round(Number(profile?.[key] ?? 0.5) * 100)}%`)
+    .join(' · ');
 }
 
 function isRejectedDiscoveryCache(track) {
@@ -1694,6 +1727,7 @@ async function handleTrackEnded() {
   }
   const current = state.tracks[state.index];
   state.playing = false;
+  await reportListenerFeedback('complete');
   await window.pywebview.api.mark_played(current.id);
   current.play_count = (Number(current.play_count) || 0) + 1;
   let advancedSnapshot = null;
@@ -1759,8 +1793,38 @@ async function handleTrackEnded() {
   state.outroVoicePromise = null;
 }
 
+async function reportListenerFeedback(action) {
+  const api = window.pywebview?.api;
+  const track = state.tracks[state.index];
+  const audio = state.localAudio;
+  if (
+    typeof api?.record_listener_feedback !== 'function'
+    || !track
+    || !audio
+    || state.audioTrackId !== track.id
+    || Number(audio.currentTime || 0) <= 0
+  ) return null;
+  try {
+    const result = await api.record_listener_feedback(
+      track.id,
+      action,
+      Number(audio.currentTime || 0),
+      Number.isFinite(audio.duration) ? Number(audio.duration) : 0,
+    );
+    if (result?.listener_profile) {
+      state.settings.listener_profile = JSON.stringify(result.listener_profile);
+      renderListenerProfile(result.listener_profile);
+    }
+    return result;
+  } catch (error) {
+    console.warn('Listener feedback was not recorded', error);
+    return null;
+  }
+}
+
 async function tune(index) {
   const current = state.tracks[state.index];
+  if (state.playing) await reportListenerFeedback('skip');
   select(index);
   await rebuildRadioQueue(index, false);
   state.tracksSinceHost = 0;

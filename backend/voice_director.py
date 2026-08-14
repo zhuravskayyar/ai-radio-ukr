@@ -37,15 +37,22 @@ class VoiceDirector:
             rate -= 2
         rate = max(-7, min(5, rate))
         personality = context.get("personality", {})
-        is_story = content_type == "story"
+        is_factual_block = content_type in {"story", "fact"}
         seconds = (
-            max(20.0, min(40.0, float(target_seconds or 22)))
-            if is_story else max(2.5, min(10.0, float(target_seconds or 10)))
+            max(7.0, min(45.0, float(target_seconds or 20)))
+            if is_factual_block else max(2.5, min(12.0, float(target_seconds or 10)))
         )
-        # Spoken stories need room for a narrative; other links stay compact.
+        # Factual blocks scale from a seven-second hook to a forty-five-second
+        # feature. Unsourced mood/announce links stay compact.
         target = seconds * (2.15 + rate / 100)
-        target_words_min = 35 if is_story else max(5, round(target * 0.85))
-        target_words_max = 55 if is_story else max(7, round(target * 1.10))
+        target_words_min = (
+            max(12, min(65, round(target * 0.75)))
+            if is_factual_block else max(5, round(target * 0.85))
+        )
+        target_words_max = (
+            max(target_words_min + 4, min(80, round(target * 1.10)))
+            if is_factual_block else max(7, round(target * 1.10))
+        )
         return VoiceProfile(
             voice=self.default_voice,
             rate=f"{rate:+d}%",

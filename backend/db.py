@@ -36,7 +36,7 @@ DEFAULTS = {
     "silence_fallback_seconds": "7",
     "chart_name": "Play Together",
     "rotation": "random",
-    "host_every": "1",
+    "host_every": "0",
     "host_humor": "42",
     "host_sarcasm": "28",
     "host_energy": "72",
@@ -64,12 +64,20 @@ DEFAULTS = {
     "station_prompt_en_source": "",
     "ai_playlist_prompt": "",
     "ai_previous_playlist": "[]",
-    "talk_probability": "100",
+    "talk_probability": "45",
     "silence_probability": "0",
     "rubric_probability": "12",
-    "story_probability": "100",
-    "story_every": "2",
-    "fact_probability": "70",
+    "story_probability": "45",
+    "story_every": "4",
+    "fact_probability": "80",
+    "listener_profile": json.dumps({
+        "history": 0.50,
+        "artist_drama": 0.50,
+        "music_theory": 0.50,
+        "strange_facts": 0.50,
+        "nostalgia": 0.50,
+        "lyrics": 0.50,
+    }, ensure_ascii=False),
     "program_name": "Play Together",
     "language_style": "casual_uk",
     "colloquiality": "0.30",
@@ -210,6 +218,7 @@ class Database:
                     mention_policy TEXT DEFAULT '',
                     length_class TEXT DEFAULT '',
                     rubric TEXT DEFAULT '',
+                    intro_type TEXT DEFAULT '',
                     opening TEXT DEFAULT '',
                     display_text TEXT NOT NULL,
                     created_at TEXT NOT NULL
@@ -219,9 +228,26 @@ class Database:
                     track_id INTEGER NOT NULL,
                     fact TEXT NOT NULL,
                     verified INTEGER DEFAULT 0,
+                    intro_type TEXT DEFAULT 'music_fact',
+                    source_url TEXT DEFAULT '',
+                    source_title TEXT DEFAULT '',
                     last_used_at TEXT,
                     use_count INTEGER DEFAULT 0,
                     UNIQUE(track_id, fact)
+                );
+                CREATE TABLE IF NOT EXISTS listener_exposures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    transition_id INTEGER,
+                    track_id INTEGER NOT NULL,
+                    current_track_id INTEGER,
+                    intro_type TEXT NOT NULL DEFAULT '',
+                    content_type TEXT NOT NULL DEFAULT '',
+                    aired_at TEXT NOT NULL,
+                    feedback_action TEXT NOT NULL DEFAULT '',
+                    listened_seconds REAL NOT NULL DEFAULT 0,
+                    completion_ratio REAL NOT NULL DEFAULT 0,
+                    feedback_at TEXT NOT NULL DEFAULT '',
+                    UNIQUE(transition_id)
                 );
                 CREATE TABLE IF NOT EXISTS music_stories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -367,11 +393,24 @@ class Database:
             history_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(intro_history)")
             }
-            for name in ("structure", "mention_policy", "length_class", "rubric"):
+            for name in (
+                "structure", "mention_policy", "length_class", "rubric",
+                "intro_type",
+            ):
                 if name not in history_columns:
                     db.execute(
                         f"ALTER TABLE intro_history ADD COLUMN {name} TEXT DEFAULT ''"
                     )
+            fact_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(track_facts)")
+            }
+            for name, declaration in {
+                "intro_type": "TEXT DEFAULT 'music_fact'",
+                "source_url": "TEXT DEFAULT ''",
+                "source_title": "TEXT DEFAULT ''",
+            }.items():
+                if name not in fact_columns:
+                    db.execute(f"ALTER TABLE track_facts ADD COLUMN {name} {declaration}")
             for key, value in DEFAULTS.items():
                 db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
             db.execute(
@@ -632,6 +671,32 @@ class Database:
                     "UPDATE settings SET value='{}' WHERE key='provider_health'"
                 )
                 db.execute("PRAGMA user_version=19")
+            if schema_version < 20:
+                # Editor-led mini-documentary format: most transitions remain
+                # music-only, while voiced links rotate factual angles and
+                # learn from completion/skip feedback.
+                db.execute(
+                    "UPDATE settings SET value='0' "
+                    "WHERE key='host_every' AND value='1'"
+                )
+                db.execute(
+                    "UPDATE settings SET value='45' "
+                    "WHERE key='talk_probability' AND value='100'"
+                )
+                db.execute(
+                    "UPDATE settings SET value='45' "
+                    "WHERE key='story_probability' AND value IN ('85','100')"
+                )
+                db.execute(
+                    "UPDATE settings SET value='4' "
+                    "WHERE key='story_every' AND value='2'"
+                )
+                db.execute(
+                    "UPDATE settings SET value='80' "
+                    "WHERE key='fact_probability' AND value='70'"
+                )
+                db.execute("DELETE FROM transitions")
+                db.execute("PRAGMA user_version=20")
             db.execute(
                 "UPDATE settings SET value=? "
                 "WHERE key='ai_max_tokens' AND value IN ('160','220','320','360')",
@@ -642,9 +707,6 @@ class Database:
             )
             db.execute(
                 "UPDATE settings SET value='85' WHERE key='story_probability' AND value IN ('30','60','70')"
-            )
-            db.execute(
-                "UPDATE settings SET value='2' WHERE key='story_every' AND value IN ('4','5','6','7','8')"
             )
             db.execute(
                 "UPDATE settings SET value='2' WHERE key='silence_probability' AND value IN ('7','10')"
@@ -1211,14 +1273,16 @@ class Database:
             db.execute(
                 """INSERT INTO intro_history(
                     current_track_id,next_track_id,content_type,style,structure,
-                    mention_policy,length_class,rubric,opening,display_text,created_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    mention_policy,length_class,rubric,intro_type,opening,
+                    display_text,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     values.get("current_track_id"), values.get("next_track_id"),
                     values.get("content_type", ""), values.get("style", ""),
                     values.get("structure", ""),
                     values.get("mention_policy", ""),
                     values.get("length_class", ""), values.get("rubric", ""),
+                    values.get("intro_type", ""),
                     values.get("opening", ""), values.get("display_text", ""),
                     values.get("created_at", ""),
                 ),
@@ -1262,13 +1326,25 @@ class Database:
         with closing(self.connect()) as db, db:
             return [dict(row) for row in db.execute(query, params)]
 
-    def add_fact(self, track_id, fact, verified=False):
+    def add_fact(
+        self, track_id, fact, verified=False, intro_type="music_fact",
+        source_url="", source_title="",
+    ):
         with closing(self.connect()) as db, db:
             db.execute(
-                """INSERT INTO track_facts(track_id,fact,verified)
-                VALUES(?,?,?) ON CONFLICT(track_id,fact) DO UPDATE SET
-                verified=MAX(track_facts.verified,excluded.verified)""",
-                (track_id, fact.strip(), int(bool(verified))),
+                """INSERT INTO track_facts(
+                    track_id,fact,verified,intro_type,source_url,source_title
+                ) VALUES(?,?,?,?,?,?) ON CONFLICT(track_id,fact) DO UPDATE SET
+                verified=MAX(track_facts.verified,excluded.verified),
+                intro_type=excluded.intro_type,
+                source_url=CASE WHEN excluded.source_url!='' THEN excluded.source_url
+                    ELSE track_facts.source_url END,
+                source_title=CASE WHEN excluded.source_title!='' THEN excluded.source_title
+                    ELSE track_facts.source_title END""",
+                (
+                    track_id, fact.strip(), int(bool(verified)), intro_type,
+                    source_url, source_title,
+                ),
             )
 
     def mark_fact_used(self, fact_id, used_at):
@@ -1278,6 +1354,65 @@ class Database:
                 WHERE id=?""",
                 (used_at, fact_id),
             )
+
+    def add_listener_exposure(self, transition, plan, aired_at):
+        track_id = int(transition.get("next_track_id") or 0)
+        if not track_id:
+            return None
+        with closing(self.connect()) as db, db:
+            cursor = db.execute(
+                """INSERT INTO listener_exposures(
+                    transition_id,track_id,current_track_id,intro_type,
+                    content_type,aired_at
+                ) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(transition_id) DO UPDATE SET aired_at=excluded.aired_at
+                """,
+                (
+                    transition.get("id"), track_id,
+                    transition.get("current_track_id"),
+                    plan.get("intro_type", ""),
+                    transition.get("content_type", ""), aired_at,
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def resolve_listener_exposure(
+        self, track_id, action, listened_seconds, completion_ratio, feedback_at,
+    ):
+        with closing(self.connect()) as db, db:
+            row = db.execute(
+                """SELECT * FROM listener_exposures
+                WHERE track_id=? AND feedback_at=''
+                ORDER BY id DESC LIMIT 1""",
+                (int(track_id),),
+            ).fetchone()
+            if not row:
+                return None
+            db.execute(
+                """UPDATE listener_exposures SET feedback_action=?,
+                listened_seconds=?,completion_ratio=?,feedback_at=? WHERE id=?""",
+                (
+                    action, float(listened_seconds), float(completion_ratio),
+                    feedback_at, row["id"],
+                ),
+            )
+            result = dict(row)
+            result.update({
+                "feedback_action": action,
+                "listened_seconds": float(listened_seconds),
+                "completion_ratio": float(completion_ratio),
+                "feedback_at": feedback_at,
+            })
+            return result
+
+    def listener_exposures(self, limit=100):
+        with closing(self.connect()) as db, db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM listener_exposures ORDER BY id DESC LIMIT ?",
+                    (int(limit),),
+                )
+            ]
 
     def stories_for_track(self, track_id, verified_only=True):
         query = "SELECT * FROM music_stories WHERE track_id=?"

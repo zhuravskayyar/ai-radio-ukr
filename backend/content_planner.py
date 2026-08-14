@@ -5,6 +5,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
+from .listener_personalization import (
+    INTRO_TYPE_DIMENSIONS,
+    INTRO_TYPES,
+    PersonalizationEngine,
+    normalize_intro_type,
+)
 from .music_knowledge import MusicKnowledgeBase
 
 
@@ -61,10 +67,19 @@ GENERIC_STRUCTURE_WEIGHTS = {
 }
 
 LENGTH_BOUNDS = {
-    "short": (8, 14, 6.0),
-    "medium": (15, 30, 13.0),
-    "long": (31, 54, 23.0),
+    "short": (12, 25, (7.0, 12.0)),
+    "normal": (28, 50, (15.0, 25.0)),
+    "feature": (45, 80, (30.0, 45.0)),
 }
+
+INTRO_TYPE_COOLDOWN_TRACKS = 4
+FORBIDDEN_OPENINGS = (
+    "а зараз",
+    "наступна композиція",
+    "цікаво знати",
+    "друзі",
+    "в ефірі",
+)
 
 
 def _parse(value):
@@ -89,6 +104,9 @@ class ContentPlan:
     must_say_time: bool = False
     may_say_weather: bool = False
     verified_fact: str = ""
+    fact_source: dict = field(default_factory=dict)
+    intro_type: str = ""
+    profile_dimension: str = ""
     fact_id: int | None = None
     story_id: int | None = None
     story_subject_track_id: int | None = None
@@ -148,6 +166,7 @@ class ContentPlanner:
         self.db = db
         self.random = random_source or random.Random()
         self.knowledge_base = MusicKnowledgeBase(db)
+        self.personalization = PersonalizationEngine(db)
 
     def _cooldown_ready(self, key, moment):
         memory = self.db.memory(key)
@@ -182,15 +201,45 @@ class ContentPlanner:
 
     def _choose_length(self, vocal_start_ms=0):
         roll = self.random.random()
-        length_class = "short" if roll < 0.20 else "medium" if roll < 0.78 else "long"
-        word_min, word_max, seconds = LENGTH_BOUNDS[length_class]
+        # Conditional on the editor choosing to speak, these weights produce
+        # the requested all-track distribution: 25% short, 15% normal, 5%
+        # feature, with the remaining 55% handled as music-only segues.
+        length_class = "short" if roll < (25 / 45) else "normal" if roll < (40 / 45) else "feature"
+        word_min, word_max, seconds_range = LENGTH_BOUNDS[length_class]
+        seconds = self.random.uniform(*seconds_range)
         if vocal_start_ms:
             available = max(3.0, vocal_start_ms / 1000 - 0.8)
             if available < seconds:
-                length_class = "short" if available < 6 else "medium"
-                word_min, word_max, seconds = LENGTH_BOUNDS[length_class]
-                seconds = min(seconds, available)
-        return length_class, word_min, word_max, seconds
+                if available < 7:
+                    return "silent", 0, 0, 0.0
+                length_class = "short" if available < 15 else "normal"
+                word_min, word_max, _seconds_range = LENGTH_BOUNDS[length_class]
+                floor, ceiling = _seconds_range
+                seconds = self.random.uniform(floor, min(ceiling, available))
+        return length_class, word_min, word_max, round(seconds, 2)
+
+    def _recent_intro_types(self, limit=INTRO_TYPE_COOLDOWN_TRACKS):
+        return {
+            str(item.get("intro_type") or "").casefold()
+            for item in self.db.recent_history(limit)
+            if item.get("intro_type")
+        }
+
+    def _intro_type_scores(self):
+        profile = self.personalization.profile()
+        return {
+            intro_type: self.personalization.preference(intro_type, profile)
+            for intro_type in INTRO_TYPES
+        }
+
+    def _editor_wants_voice(self, settings, sequence_offset):
+        host_every = max(0, int(float(settings.get("host_every", 0))))
+        if host_every:
+            return sequence_offset % host_every == 0
+        talk_probability = max(
+            0, min(100, int(float(settings.get("talk_probability", 45))))
+        )
+        return self.random.randrange(100) < talk_probability
 
     @staticmethod
     def _reaction(context):
@@ -455,14 +504,65 @@ class ContentPlanner:
                 memory_keys=["callback:rain"],
             )
 
+        # EDITOR AI is deliberately deterministic here: it decides whether a
+        # microphone is needed before any host-writing model is called. The
+        # default 45% voice rate yields approximately 55% music-only segues.
+        silence_probability = max(
+            0, min(100, int(float(settings.get("silence_probability", 0))))
+        )
+        if (
+            self.random.randrange(100) < silence_probability
+            or not self._editor_wants_voice(settings, sequence_offset)
+        ):
+            return ContentPlan(
+                content_type="clean_segue",
+                style="straight_radio",
+                announce_mode="none",
+                target_seconds=0,
+                directive="Редактор свідомо залишає чистий музичний перехід.",
+                structure="silence",
+                mention_policy="implicit",
+                length_class="silent",
+                reaction=reaction,
+                session_phase=session_phase,
+            )
+
+        length_class, word_min, word_max, editorial_seconds = self._choose_length(
+            int(next_track.get("vocal_start_ms") or 0)
+        )
+        if length_class == "silent":
+            return ContentPlan(
+                content_type="clean_segue",
+                style="straight_radio",
+                announce_mode="none",
+                target_seconds=0,
+                directive="Вокальне вікно надто коротке для безпечної підводки.",
+                structure="silence",
+                mention_policy="implicit",
+                length_class="silent",
+                reaction=reaction,
+                session_phase=session_phase,
+            )
+
+        recent_intro_types = self._recent_intro_types()
+        intro_type_scores = self._intro_type_scores()
+
         story_subject = next_track
         story_subject_role = "next"
-        story = self.knowledge_base.select(next_track.get("id"))
+        story = self.knowledge_base.select(
+            next_track.get("id"),
+            recent_intro_types,
+            intro_type_scores,
+        )
         # The first song is started immediately, before a scheduled transition
         # exists. If it owns a sourced story, use that card in the first link
         # after the song instead of losing the most natural commentary slot.
         if not story and current_track.get("id"):
-            story = self.knowledge_base.select(current_track.get("id"))
+            story = self.knowledge_base.select(
+                current_track.get("id"),
+                recent_intro_types,
+                intro_type_scores,
+            )
             if story:
                 story_subject = current_track
                 story_subject_role = "current"
@@ -481,15 +581,12 @@ class ContentPlanner:
 
         if story and (story_due or self.random.randrange(100) < story_probability):
             duration_class = story.get("duration_class") or "normal"
-            target_story_seconds = max(
-                20.0,
-                min(45.0, float(story.get("target_seconds") or 25.0)),
-            )
+            intro_type = story.get("intro_type") or "music_fact"
             return ContentPlan(
                 content_type="story",
                 style="music_story",
                 announce_mode="story_reveal",
-                target_seconds=target_story_seconds,
+                target_seconds=editorial_seconds,
                 story_id=story["id"],
                 story_subject_track_id=story_subject.get("id"),
                 story_subject_role=story_subject_role,
@@ -512,6 +609,8 @@ class ContentPlanner:
                 story_episode=int(story.get("episode") or 0),
                 story_tease_next=story.get("tease_next", ""),
                 story_callback=story.get("callback", ""),
+                intro_type=intro_type,
+                profile_dimension=INTRO_TYPE_DIMENSIONS.get(intro_type, ""),
                 directive=(
                     f"Блок {settings.get('program_name', 'Play Together')}: перевірений мінісюжет у стилі рок-ефіру. "
                     + (
@@ -526,7 +625,9 @@ class ContentPlanner:
                 memory_keys=[f"story:{story['id']}"],
                 structure="story",
                 mention_policy="artist_and_title",
-                length_class="long" if duration_class != "short" else "medium",
+                length_class=length_class,
+                word_min=word_min,
+                word_max=word_max,
                 reaction=reaction,
                 session_phase=session_phase,
             )
@@ -534,14 +635,20 @@ class ContentPlanner:
         facts = self.db.facts_for_track(next_track.get("id"), verified_only=True)
         if context.get("same_artist_recently"):
             facts = []
-        talk_probability = max(0, min(100, int(float(settings.get("talk_probability", 35)))))
-        roll = self.random.randrange(100)
-        if time["daypart"] == "night":
-            roll += 15
-        host_every = max(1, int(settings.get("host_every", 1)))
-        force_voice = host_every == 1
-        if sequence_offset and sequence_offset % host_every != 0:
-            roll += 15
+        for fact in facts:
+            fact["intro_type"] = normalize_intro_type(
+                fact.get("intro_type"), "music_fact"
+            )
+        facts = [
+            fact for fact in facts
+            if fact["intro_type"] not in recent_intro_types
+        ]
+        facts.sort(key=lambda fact: (
+            -intro_type_scores.get(fact["intro_type"], 0.5),
+            str(fact.get("last_used_at") or ""),
+            int(fact.get("use_count") or 0),
+            int(fact.get("id") or 0),
+        ))
 
         fact_probability = max(
             0,
@@ -553,12 +660,19 @@ class ContentPlanner:
         )
         if facts and (fact_due or self.random.randrange(100) < fact_probability):
             fact = facts[0]
+            intro_type = fact["intro_type"]
             return ContentPlan(
                 content_type="fact",
                 style="interesting_fact",
                 announce_mode="forward",
-                target_seconds=max(target_seconds, 12.0),
+                target_seconds=editorial_seconds,
                 verified_fact=fact["fact"],
+                fact_source={
+                    "url": fact.get("source_url", ""),
+                    "title": fact.get("source_title", ""),
+                },
+                intro_type=intro_type,
+                profile_dimension=INTRO_TYPE_DIMENSIONS.get(intro_type, ""),
                 fact_id=fact["id"],
                 directive=(
                     f"Короткий блок {settings.get('program_name', 'Play Together')}: один перевірений факт "
@@ -567,9 +681,9 @@ class ContentPlanner:
                 memory_keys=[f"fact:{fact['id']}"],
                 structure="fact",
                 mention_policy="artist_and_title",
-                length_class="long",
-                word_min=18,
-                word_max=42,
+                length_class=length_class,
+                word_min=word_min,
+                word_max=word_max,
                 reaction=reaction,
                 session_phase=session_phase,
             )
@@ -608,55 +722,35 @@ class ContentPlanner:
                 session_phase=session_phase,
             )
 
-        silence_probability = max(
-            0, min(100, int(float(settings.get("silence_probability", 7))))
-        )
-        if self.random.randrange(100) < silence_probability:
-            return ContentPlan(
-                content_type="clean_segue",
-                style="straight_radio",
-                announce_mode="none",
-                target_seconds=0,
-                directive="Адам Вектор свідомо мовчить: чистий музичний перехід.",
-                structure="silence",
-                mention_policy="implicit",
-                length_class="silent",
-                reaction=reaction,
-                session_phase=session_phase,
-            )
-
-        if not force_voice and roll >= talk_probability + 30:
-            return ContentPlan(
-                content_type="clean_segue",
-                style="straight_radio",
-                announce_mode="none",
-                target_seconds=0,
-                directive="Без голосу: чистий музичний перехід.",
-                structure="silence",
-                mention_policy="implicit",
-                length_class="silent",
-                reaction=reaction,
-                session_phase=session_phase,
-            )
-        if not force_voice and roll >= talk_probability:
-            return ContentPlan(
-                content_type="liner",
-                style="straight_radio",
-                announce_mode="station_id",
-                target_seconds=4,
-                liner_text=self.random.choice(LINERS),
-                directive="Короткий station liner без оголошення треку.",
-                structure="station",
-                mention_policy="implicit",
-                length_class="short",
-                word_min=4,
-                word_max=8,
-                reaction=reaction,
-                session_phase=session_phase,
-            )
-
         structure = self._choose_structure()
-        length_class, word_min, word_max, length_seconds = self._choose_length(vocal_start_ms)
+        generic_intro_types = (
+            ["comparison", "listener_context"]
+            if structure == "transition" else
+            ["listener_context", "comparison"]
+        )
+        intro_type = next(
+            (value for value in generic_intro_types if value not in recent_intro_types),
+            "",
+        )
+        if not intro_type:
+            return ContentPlan(
+                content_type="clean_segue",
+                style="straight_radio",
+                announce_mode="none",
+                target_seconds=0,
+                directive="Типи підводок на редакційному cooldown; чистий перехід.",
+                structure="silence",
+                mention_policy="implicit",
+                length_class="silent",
+                reaction=reaction,
+                session_phase=session_phase,
+            )
+        if length_class == "feature":
+            # Never stretch an unsourced mood line to a feature. Long blocks
+            # are reserved for verified facts and Story Cards.
+            length_class = "short"
+            word_min, word_max, _ = LENGTH_BOUNDS[length_class]
+            editorial_seconds = self.random.uniform(7.0, 12.0)
         mention_policy = self._mention_policy(structure)
         style_by_structure = {
             "announce": "straight_radio",
@@ -689,8 +783,10 @@ class ContentPlanner:
                 else "identify_first" if self.random.random() < 0.25
                 else self._recent_announce_mode()
             ),
-            target_seconds=length_seconds,
+            target_seconds=round(editorial_seconds, 2),
             directive=directive,
+            intro_type=intro_type,
+            profile_dimension=INTRO_TYPE_DIMENSIONS.get(intro_type, ""),
             structure=structure,
             mention_policy=mention_policy,
             length_class=length_class,
@@ -715,6 +811,9 @@ class ContentPlanner:
         verified_story_data=None, mention_policy=None, structure="",
     ):
         lowered = (display_text or "").casefold()
+        opening = lowered.lstrip(" \t\r\n«\"'—–-.,:;!?")
+        if any(opening.startswith(value) for value in FORBIDDEN_OPENINGS):
+            return False, "заборонений початок підводки"
         if any(cliche in lowered for cliche in FORBIDDEN_CLICHES):
             return False, "заборонений радіоштамп"
         # mention_policy controls how strictly the host must name artist/title.

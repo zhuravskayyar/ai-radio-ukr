@@ -294,6 +294,10 @@ def verify():
           apiInputVisible: document.querySelector('#apiTextInput').getBoundingClientRect().height > 40,
           apiFileButtonVisible: document.querySelector('.file-button').getBoundingClientRect().height > 20,
           genreVisible: document.querySelector('#simpleStationPrompt').getBoundingClientRect().height > 40,
+          editorModeOption: [...document.querySelectorAll('[data-setting="host_every"] option')]
+            .some(option => option.value === '0' && option.textContent.includes('Редактор вирішує')),
+          listenerProfileReady: document.querySelector('#listenerProfileSummary').textContent
+            .includes('історія: 50%'),
           visibleCards: [...document.querySelectorAll('#settings .settingsGrid > article')]
             .filter(node => getComputedStyle(node).display !== 'none').length
         }))()""")
@@ -369,6 +373,8 @@ def verify():
         assert simple_settings["apiInputVisible"] is True
         assert simple_settings["apiFileButtonVisible"] is True
         assert simple_settings["genreVisible"] is True
+        assert simple_settings["editorModeOption"] is True
+        assert simple_settings["listenerProfileReady"] is True
         assert simple_settings["visibleCards"] == 1
     except BaseException as exc:
         failures.append(exc)
