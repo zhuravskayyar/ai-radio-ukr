@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.0.6"
 REPOSITORY = "zhuravskayyar/ai-radio-ukr"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 PATCH_NAME_TEMPLATE = "Vector_Radio_Patch_{version}.exe"
@@ -18,6 +18,12 @@ PATCH_NAME_TEMPLATE = "Vector_Radio_Patch_{version}.exe"
 
 def _version_tuple(value):
     numbers = [int(part) for part in re.findall(r"\d+", str(value or ""))[:4]]
+    # Releases through 1.0.5 used three components. The Windows release line
+    # continues as 1.0.0.6, where the fourth component is the patch counter.
+    # Normalize both spellings so existing 1.0.5 installations see 1.0.0.6
+    # as the next update rather than a downgrade.
+    if len(numbers) == 4 and numbers[2] == 0:
+        numbers = [numbers[0], numbers[1], numbers[3]]
     return tuple((numbers + [0, 0, 0, 0])[:4])
 
 

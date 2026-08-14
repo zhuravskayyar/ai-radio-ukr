@@ -142,7 +142,8 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
         self.assertEqual(options["default_search"], "ytsearch5")
         self.assertEqual(options["playlist_items"], "1-5")
         self.assertTrue(options["geo_bypass"])
-        self.assertEqual(options["age_limit"], 17)
+        self.assertNotIn("age_limit", options)
+        self.assertNotIn("cookiesfrombrowser", options)
         self.assertEqual(
             options["js_runtimes"],
             {"deno": {"path": r"C:\Vector Radio\runtime\Scripts\deno.exe"}},
@@ -231,6 +232,181 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                         "Artist - Track", directory,
                         search=True, music_search=True,
                     )
+
+    def test_age_restriction_retries_once_with_selected_browser_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "Track [adult-id].webm"
+            option_history = []
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+                    option_history.append(options.get("cookiesfrombrowser"))
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    if "cookiesfrombrowser" not in self.options:
+                        self.options["logger"].error(
+                            "ERROR: Sign in to confirm your age",
+                        )
+                        return {"entries": []}
+                    audio_path.write_bytes(b"authorized-audio")
+                    return {
+                        "id": "adult-id",
+                        "title": "Artist - Track",
+                        "_filename": str(audio_path),
+                    }
+
+                def prepare_filename(self, info):
+                    return info.get("_filename", "")
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                result = lumen_downloader.download_audio_item(
+                    "Artist - Track",
+                    directory,
+                    search=True,
+                    youtube_auth_browser="edge",
+                    youtube_auth_profile="Profile 2",
+                )
+
+            self.assertEqual(result["path"], audio_path.resolve())
+            self.assertEqual(option_history, [
+                None,
+                ("edge", "Profile 2", None, None),
+            ])
+
+    def test_youtube_auth_is_not_used_for_a_non_age_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            option_history = []
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+                    option_history.append(options.get("cookiesfrombrowser"))
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    self.options["logger"].error(
+                        "ERROR: This video is unavailable",
+                    )
+                    return {"entries": []}
+
+                def prepare_filename(self, info):
+                    return ""
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                with self.assertRaises(RuntimeError):
+                    lumen_downloader.download_audio_item(
+                        "Artist - Track",
+                        directory,
+                        search=True,
+                        youtube_auth_browser="chrome",
+                    )
+
+            self.assertEqual(option_history, [None])
+
+    def test_failed_youtube_auth_continues_with_next_search_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "Track [next-id].webm"
+            attempts = []
+
+            class FakeYoutubeDL:
+                def __init__(self, options):
+                    self.options = options
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def extract_info(self, target, download=True):
+                    auth = self.options.get("cookiesfrombrowser")
+                    attempts.append((target, auth))
+                    if target == "Artist - Track":
+                        self.options["logger"].error(
+                            "ERROR: Sign in to confirm your age",
+                        )
+                        return {"entries": []}
+                    audio_path.write_bytes(b"next-candidate")
+                    return {
+                        "id": "next-id",
+                        "title": "Artist - Track",
+                        "_filename": str(audio_path),
+                    }
+
+                def prepare_filename(self, info):
+                    return info.get("_filename", "")
+
+            with patch.object(
+                lumen_downloader.yt_dlp, "YoutubeDL", FakeYoutubeDL,
+            ), patch.object(
+                lumen_downloader, "find_ffmpeg_location", return_value=None,
+            ):
+                result = lumen_downloader.download_audio_item(
+                    "Artist - Track",
+                    directory,
+                    search=True,
+                    music_search=True,
+                    youtube_auth_browser="chrome",
+                )
+
+            self.assertEqual(result["path"], audio_path.resolve())
+            self.assertEqual(attempts, [
+                ("Artist - Track", None),
+                ("Artist - Track", ("chrome",)),
+                ("Artist - Track official audio", None),
+            ])
+
+    def test_radio_passes_youtube_auth_settings_to_lumen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            api.db.save_settings({
+                "youtube_auth_browser": "firefox",
+                "youtube_auth_profile": "radio-profile",
+            })
+
+            with patch.object(
+                lumen_downloader,
+                "download_audio_item",
+                return_value={"path": Path(directory) / "audio.mp3", "info": {}},
+            ) as download:
+                api._download_audio_with_lumen("Artist - Track", directory)
+
+            self.assertEqual(
+                download.call_args.kwargs["youtube_auth_browser"], "firefox",
+            )
+            self.assertEqual(
+                download.call_args.kwargs["youtube_auth_profile"], "radio-profile",
+            )
+
+    def test_unknown_youtube_auth_browser_is_saved_as_off(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+
+            result = api.save_settings({
+                "youtube_auth_browser": "unsupported-browser",
+            })
+
+            self.assertEqual(result["settings"]["youtube_auth_browser"], "off")
 
     def test_rejected_search_result_cannot_reuse_an_old_download(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -513,6 +689,10 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
         self.assertNotIn("loadVideoById", app)
         self.assertNotIn("cueVideoById", app)
         self.assertNotIn("youtube.com/iframe_api", index)
+        self.assertIn('data-setting="youtube_auth_browser"', app)
+        self.assertIn('data-setting="youtube_auth_profile"', app)
+        self.assertIn("void applyReadyUpdate(true)", app)
+        self.assertIn("window.pywebview.api.apply_update()", app)
 
 
 if __name__ == "__main__":
