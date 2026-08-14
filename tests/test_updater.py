@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.updater import LATEST_RELEASE_URL, UpdateManager
+from backend.updater import LATEST_RELEASE_URL, UpdateManager, _version_tuple
 
 
 class FakeResponse:
@@ -48,6 +48,10 @@ def release_payload(version, patch_url, checksum_url):
 
 
 class UpdateManagerTests(unittest.TestCase):
+    def test_four_component_release_continues_legacy_patch_sequence(self):
+        self.assertGreater(_version_tuple("1.0.0.6"), _version_tuple("1.0.5"))
+        self.assertEqual(_version_tuple("1.0.0.6"), _version_tuple("1.0.6"))
+
     def test_new_patch_is_downloaded_and_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             patch_data = b"verified-vector-radio-patch"

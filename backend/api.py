@@ -2238,6 +2238,13 @@ class RadioAPI:
 
     def save_settings(self, values):
         values = dict(values or {})
+        if "youtube_auth_browser" in values:
+            browser = str(
+                values.get("youtube_auth_browser") or "off"
+            ).strip().casefold()
+            values["youtube_auth_browser"] = (
+                browser if browser in {"chrome", "edge", "firefox"} else "off"
+            )
         # The WebView never receives the credential pool and therefore cannot
         # replace or erase it. Only the validated TXT importer may update it.
         values.pop("nvidia_api_keys", None)
@@ -3129,6 +3136,7 @@ darkwave чи post-punk: українська та російськомовна 
             from Qwen_python_20260804_4sskbslqs import download_audio_item
         except (ImportError, SystemExit) as exc:
             raise RuntimeError("LUMEN Downloader недоступний") from exc
+        settings = self.db.settings()
         return download_audio_item(
             item,
             output_dir,
@@ -3136,6 +3144,8 @@ darkwave чи post-punk: українська та російськомовна 
             music_search=music_search,
             candidates=5,
             retries=2,
+            youtube_auth_browser=settings.get("youtube_auth_browser", "off"),
+            youtube_auth_profile=settings.get("youtube_auth_profile", ""),
             validator=validator,
             progress_callback=progress_callback,
         )

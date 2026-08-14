@@ -32,6 +32,8 @@ const state = {
   tracksSinceStory: 3,
   radioQueue: null,
   updateStatus: null,
+  updateApplyBusy: false,
+  autoUpdateAttemptedVersion: '',
   appVersion: '',
   pilotClock: null,
   broadcastSafety: null,
@@ -250,6 +252,18 @@ function ensureCharacterSettings() {
             <option value="1">Увімкнений · фоновий yt-dlp</option>
           </select>
         </label>
+        <label>YouTube Auth для 18+ fallback
+          <select data-setting="youtube_auth_browser">
+            <option value="off">Вимкнено</option>
+            <option value="chrome">Chrome</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+          </select>
+        </label>
+        <label>Профіль браузера (необов'язково)
+          <input data-setting="youtube_auth_profile" placeholder="Наприклад: Profile 2">
+        </label>
+        <p class="hint">Cookies браузера використовуються лише після помилки age restriction. Увійдіть у вибраному профілі в окремий підтверджений 18+ акаунт; масова автоматизація може спричинити обмеження акаунта.</p>
         <p class="hint"><b>Автоматичний режим активний.</b> Технічний дозвіл на пошук зберігається патчем. Користувач сам відповідає за право використовувати вибрані джерела й композиції.</p>
         <p id="queueStatus" class="hint">Буфер працює з локальної бібліотеки</p>
         <p class="hint">Онлайн-пошук працює у фоні. Файли кешуються до встановленого ліміту, а плеєр не блокується під час поповнення.</p>
@@ -1146,6 +1160,37 @@ function renderUpdateStatus() {
     button.textContent = status.latest_version
       ? `Встановити ${status.latest_version}`
       : 'Встановити оновлення';
+  }
+  if (status.ready && String(state.settings.auto_update_enabled ?? '1') === '1') {
+    void applyReadyUpdate(true);
+  }
+}
+
+async function applyReadyUpdate(automatic = false) {
+  const status = state.updateStatus || {};
+  if (!status.ready || state.updateApplyBusy) return;
+  const version = String(status.latest_version || 'оновлення');
+  if (automatic) {
+    if (state.autoUpdateAttemptedVersion === version) return;
+    state.autoUpdateAttemptedVersion = version;
+  }
+  state.updateApplyBusy = true;
+  const button = $('#applyUpdate');
+  if (button) {
+    button.disabled = true;
+    button.textContent = automatic
+      ? `Автоматично встановлюю ${version}…`
+      : 'Закриваю програму…';
+  }
+  try {
+    const result = await window.pywebview.api.apply_update();
+    if (!result?.ok) throw new Error(result?.error || 'Патч не готовий');
+    toast(result.message || 'Встановлюю оновлення…');
+  } catch (error) {
+    state.updateApplyBusy = false;
+    if (button) button.disabled = false;
+    renderUpdateStatus();
+    toast(`Не вдалося встановити оновлення: ${error?.message || error}`);
   }
 }
 
@@ -2158,20 +2203,7 @@ $('#loadMore').onclick = () => {
 };
 
 if ($('#applyUpdate')) {
-  $('#applyUpdate').onclick = async () => {
-    const button = $('#applyUpdate');
-    button.disabled = true;
-    button.textContent = 'Закриваю програму…';
-    try {
-      const result = await window.pywebview.api.apply_update();
-      if (!result?.ok) throw new Error(result?.error || 'Патч не готовий');
-      toast(result.message || 'Встановлюю оновлення…');
-    } catch (error) {
-      button.disabled = false;
-      renderUpdateStatus();
-      toast(`Не вдалося встановити оновлення: ${error?.message || error}`);
-    }
-  };
+  $('#applyUpdate').onclick = () => void applyReadyUpdate(false);
 }
 
 $('#saveSettings').onclick = async () => {

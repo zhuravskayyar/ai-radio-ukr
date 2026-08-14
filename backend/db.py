@@ -59,6 +59,8 @@ DEFAULTS = {
     "dynamic_discovery_enabled": "1",
     "licensed_sources_confirmed": "1",
     "auto_update_enabled": "1",
+    "youtube_auth_browser": "off",
+    "youtube_auth_profile": "",
     "station_prompt": "Сучасний альт рок, український і російськомовний alternative/indie rock; без музейного старого росроку типу Цоя, Кино, ДДТ, Би-2, Алисы чи Аквариума; чергуй впізнавані та свіжі треки, без попси й каверів.",
     "station_prompt_en": "",
     "station_prompt_en_source": "",

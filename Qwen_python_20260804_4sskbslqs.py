@@ -166,9 +166,6 @@ def build_options(args, progress_hook=None, logger=None):
         'windowsfilenames': True,
         'geo_bypass': True,
         'youtube_include_dash_manifest': True,
-        # The radio does not need age-restricted sources. yt-dlp skips any
-        # result marked 18+ instead of asking for browser cookies.
-        'age_limit': 17,
     }
 
     javascript_runtime = find_javascript_runtime()
@@ -238,6 +235,9 @@ class _AttemptLogger:
         self.logger.info(message)
 
     def warning(self, message):
+        value = str(message or '').strip()
+        if value and _is_age_restriction_error(value):
+            self.errors.append(value)
         self.logger.warning(message)
 
     def error(self, message):
@@ -247,13 +247,44 @@ class _AttemptLogger:
         self.logger.error(message)
 
 
+AGE_RESTRICTION_MARKERS = (
+    'confirm your age',
+    'age restricted',
+    'age-restricted',
+    'age verification',
+    'inappropriate for some users',
+)
+YOUTUBE_AUTH_BROWSERS = {'chrome', 'edge', 'firefox'}
+
+
+def _is_age_restriction_error(value: object) -> bool:
+    lowered = str(value or '').casefold()
+    return any(marker in lowered for marker in AGE_RESTRICTION_MARKERS)
+
+
+def _youtube_auth_spec(browser: object, profile: object = None):
+    name = str(browser or '').strip().casefold()
+    if name in {'', '0', 'off', 'none', 'disabled'}:
+        return None
+    if name not in YOUTUBE_AUTH_BROWSERS:
+        raise ValueError(
+            'YouTube Auth підтримує лише Chrome, Edge або Firefox'
+        )
+    profile_name = str(profile or '').strip() or None
+    return (name, profile_name, None, None) if profile_name else (name,)
+
+
 def _friendly_download_error(value: object) -> str:
     text = str(value or '').strip()
     lowered = text.casefold()
     if not text:
         return ''
-    if 'confirm your age' in lowered or 'age restricted' in lowered:
+    if _is_age_restriction_error(text):
         return 'віково обмежений результат пропущено'
+    if 'cookie' in lowered and (
+        'decrypt' in lowered or 'database' in lowered or 'failed to load' in lowered
+    ):
+        return 'YouTube Auth не зміг прочитати cookies браузера'
     if 'http error 403' in lowered or '403: forbidden' in lowered:
         return 'YouTube відхилив завантаження (HTTP 403)'
     if 'video is not available' in lowered or 'this video is unavailable' in lowered:
@@ -350,6 +381,8 @@ def download_audio_item(
     music_search: bool = False,
     candidates: int = 5,
     retries: int = 5,
+    youtube_auth_browser: str | None = None,
+    youtube_auth_profile: str | None = None,
     validator=None,
     progress_callback=None,
 ):
@@ -376,6 +409,9 @@ def download_audio_item(
         candidates=max(1, int(candidates)),
     )
     targets = _search_targets(item, bool(search and music_search))
+    auth_spec = _youtube_auth_spec(
+        youtube_auth_browser, youtube_auth_profile,
+    )
 
     last_error: Exception | None = None
     failure_details: list[str] = []
@@ -434,38 +470,70 @@ def download_audio_item(
 
             opts['match_filter'] = validated_filter
 
-        payload = None
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                payload = ydl.extract_info(target, download=True)
-                infos = [*completed_infos, *_media_infos(payload)]
-                for info in reversed(infos):
-                    if validator and str(info.get('id') or '') not in validated_media_ids:
-                        continue
-                    path = _downloaded_audio_path(info, ydl, output_dir)
-                    if path:
-                        return {'path': path, 'info': info}
-        except Exception as exc:
-            last_error = exc
-            # A completed audio file is valid even when an optional
-            # postprocessor or max_downloads=1 raises afterwards. The radio
-            # consumes the local file, not a thumbnail or remote stream.
+        def try_download(attempt_opts):
+            ydl = None
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    for info in reversed(completed_infos):
+                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                    payload = ydl.extract_info(target, download=True)
+                    infos = [*completed_infos, *_media_infos(payload)]
+                    for info in reversed(infos):
                         if validator and str(info.get('id') or '') not in validated_media_ids:
                             continue
                         path = _downloaded_audio_path(info, ydl, output_dir)
                         if path:
-                            return {'path': path, 'info': info}
-            except Exception:
-                pass
-            friendly = _friendly_download_error(exc)
-            if friendly and friendly not in failure_details:
-                failure_details.append(friendly)
+                            return {'path': path, 'info': info}, None
+            except Exception as exc:
+                # A completed audio file is valid even when an optional
+                # postprocessor or max_downloads=1 raises afterwards. The
+                # radio consumes the local file, not a remote media URL.
+                if ydl is not None:
+                    try:
+                        for info in reversed(completed_infos):
+                            if validator and str(info.get('id') or '') not in validated_media_ids:
+                                continue
+                            path = _downloaded_audio_path(info, ydl, output_dir)
+                            if path:
+                                return {'path': path, 'info': info}, None
+                    except Exception:
+                        pass
+                return None, exc
+            return None, None
 
-        for message in attempt_logger.errors:
-            friendly = _friendly_download_error(message)
+        downloaded, attempt_error = try_download(opts)
+        if downloaded:
+            return downloaded
+        if attempt_error:
+            last_error = attempt_error
+
+        raw_failures = [attempt_error, *attempt_logger.errors]
+        age_restricted = any(
+            _is_age_restriction_error(value)
+            for value in raw_failures
+            if value
+        )
+
+        # Browser cookies are deliberately absent from ordinary searches.
+        # Retry the same target with the selected browser session only when
+        # yt-dlp explicitly reports an age gate. If that still fails, the
+        # surrounding search continues to the next target/candidate.
+        if auth_spec and age_restricted:
+            LOGGER.info(
+                'YouTube age restriction detected; retrying with %s cookies',
+                auth_spec[0],
+            )
+            auth_logger = _AttemptLogger(LOGGER)
+            auth_opts = dict(opts)
+            auth_opts['logger'] = auth_logger
+            auth_opts['cookiesfrombrowser'] = auth_spec
+            downloaded, auth_error = try_download(auth_opts)
+            if downloaded:
+                return downloaded
+            if auth_error:
+                last_error = auth_error
+            raw_failures.extend([auth_error, *auth_logger.errors])
+
+        for value in raw_failures:
+            friendly = _friendly_download_error(value)
             if friendly and friendly not in failure_details:
                 failure_details.append(friendly)
         if filter_rejections:
