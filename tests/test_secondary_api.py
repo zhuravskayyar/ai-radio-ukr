@@ -225,7 +225,7 @@ class SecondaryApiTests(unittest.TestCase):
                     "provider": "nvidia",
                     "candidate": json.dumps({
                         "tracks": [
-                            {"artist": "Working Artist", "title": "Working Track"},
+                            {"artist": "Working Artist", "title": "Working Track", "genre": "alternative rock"},
                         ],
                         "similarTracks": [], "targetMood": [], "avoid": [],
                     }),
@@ -267,7 +267,7 @@ class SecondaryApiTests(unittest.TestCase):
                     "provider": spec["name"],
                     "candidate": json.dumps({
                         "tracks": [
-                            {"artist": "Working Artist", "title": "Working Track"},
+                            {"artist": "Working Artist", "title": "Working Track", "genre": "alternative rock"},
                         ],
                         "similarTracks": [], "targetMood": [], "avoid": [],
                     }),
@@ -557,7 +557,12 @@ api_key="nvapi-extra-three")''',
                         "provider": spec["name"],
                         "candidate": json.dumps({
                             "tracks": [
-                                {"artist": artist, "title": title, "reason": "modern alt"}
+                                {
+                                    "artist": artist,
+                                    "title": title,
+                                    "reason": "modern alt",
+                                    "genre": "alternative rock",
+                                }
                                 for artist, title in plan_tracks
                             ],
                             "similarTracks": [],
@@ -601,10 +606,18 @@ api_key="nvapi-extra-three")''',
             def fake_completion(spec, system_prompt, *_args):
                 if '"tracks"' in system_prompt:
                     tracks = (
-                        [{"artist": "Short Artist", "title": "Short Song", "reason": "ok"}]
+                        [{
+                            "artist": "Short Artist", "title": "Short Song",
+                            "reason": "ok", "genre": "rock",
+                        }]
                         if spec["name"] == "nvidia"
                         else [
-                            {"artist": f"Artist {index}", "title": f"Track {index}", "reason": "fits"}
+                            {
+                                "artist": f"Artist {index}",
+                                "title": f"Track {index}",
+                                "reason": "fits",
+                                "genre": "rock",
+                            }
                             for index in range(1, 11)
                         ]
                     )

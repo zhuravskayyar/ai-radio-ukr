@@ -50,6 +50,51 @@ DEFAULT_AI_MAX_TOKENS = int(DEFAULTS["ai_max_tokens"])
 # RadioAPI will then discard text and prepared transitions from older prompts.
 HOST_PROMPT_VERSION = "2026-08-14-fact-editor-personalization-v1"
 
+# Canonical genre families used to validate the model's structured genre tag.
+# The station prompt remains free-form; only explicit genre words participate
+# in this gate, while era, language and mood stay in the AI selection prompt.
+GENRE_ALIASES = {
+    "alternative_rock": ("alternative rock", "alt rock", "альтернативний рок", "альт рок"),
+    "dream_pop": ("dream pop", "dream-pop", "дрім поп", "дрим поп"),
+    "post_punk": ("post punk", "post-punk", "постпанк", "пост панк"),
+    "darkwave": ("darkwave", "dark wave", "дарквейв", "дарк вейв"),
+    "new_wave": ("new wave", "нова хвиля", "новая волна"),
+    "drum_and_bass": ("drum and bass", "drum & bass", "dnb", "драм енд бейс"),
+    "hip_hop": ("hip hop", "hip-hop", "хіп хоп", "хип хоп", "реп", "rap"),
+    "rnb": ("r&b", "rnb", "rhythm and blues", "ритм енд блюз"),
+    "shoegaze": ("shoegaze", "шугейз"),
+    "chanson": ("russian chanson", "chanson", "шансон"),
+    "electronic": ("electronic", "electronica", "електроніка", "электроника"),
+    "classical": ("classical", "класична музика", "классическая музыка"),
+    "reggae": ("reggae", "регі", "регги"),
+    "country": ("country", "кантрі", "кантри"),
+    "techno": ("techno", "техно"),
+    "house": ("house", "хаус"),
+    "metal": ("metal", "метал"),
+    "punk": ("punk", "панк"),
+    "indie": ("indie", "інді", "инди"),
+    "rock": ("rock", "рок"),
+    "pop": ("pop", "поп", "попса", "попси"),
+    "jazz": ("jazz", "джаз"),
+    "blues": ("blues", "блюз"),
+    "folk": ("folk", "фолк"),
+    "soul": ("soul", "соул"),
+    "disco": ("disco", "диско"),
+    "funk": ("funk", "фанк"),
+}
+
+GENRE_PARENTS = {
+    "alternative_rock": {"rock"},
+    "post_punk": {"punk", "rock"},
+    "dream_pop": {"pop"},
+    "darkwave": {"electronic"},
+    "new_wave": {"rock", "electronic"},
+}
+
+GENERIC_GENRES = {
+    "rock", "pop", "electronic", "metal", "punk", "indie", "folk",
+}
+
 
 def _normalized_ai_max_tokens(settings=None):
     """Return the bounded standard completion-token cap for AI requests."""
@@ -949,6 +994,8 @@ class RadioAPI:
     def __init__(self, root: Path, enable_auto_restart: bool = False):
         self.root = root
         self.db = Database(root / "data" / "radio.db")
+        reset = self.db.reset_runtime_session()
+        LOGGER.info("Runtime session memory reset: %s", reset)
         self._sync_host_prompt_version()
         self._shutdown_event = threading.Event()
         # Off by default: scripts/tests construct RadioAPI too, and must never
@@ -1015,6 +1062,80 @@ class RadioAPI:
     def _normalized_station_prompt(value):
         return " ".join(str(value or "").casefold().split())
 
+    @staticmethod
+    def _recommendation_genre(value):
+        genres = value.get("genres") if isinstance(value, dict) else None
+        if isinstance(genres, list):
+            genres = ", ".join(str(item).strip() for item in genres if str(item).strip())
+        return str(
+            (value or {}).get("genre") or genres or (value or {}).get("reason") or ""
+        ).strip()
+
+    @staticmethod
+    def _genre_mentions(value):
+        text = " ".join(str(value or "").casefold().replace("_", " ").split())
+        matches = []
+        occupied = []
+        aliases = sorted(
+            (
+                (alias.casefold(), genre)
+                for genre, values in GENRE_ALIASES.items()
+                for alias in values
+            ),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        for alias, genre in aliases:
+            pattern = rf"(?<!\w){re.escape(alias)}(?!\w)"
+            for match in re.finditer(pattern, text, flags=re.UNICODE):
+                span = match.span()
+                if any(span[0] < end and start < span[1] for start, end in occupied):
+                    continue
+                occupied.append(span)
+                matches.append((span[0], span[1], genre))
+        return text, sorted(matches)
+
+    @classmethod
+    def _station_genre_policy(cls, station_prompt):
+        text, mentions = cls._genre_mentions(station_prompt)
+        positive = set()
+        negative = set()
+        negation = re.compile(
+            r"(?:без|крім|окрім|не|exclude|avoid|without|except|no|not)"
+            r"(?:\s+[\w'’&+-]+){0,3}\s*$",
+            flags=re.IGNORECASE | re.UNICODE,
+        )
+        for start, _end, genre in mentions:
+            prefix = text[max(0, start - 40):start]
+            (negative if negation.search(prefix) else positive).add(genre)
+        # A specific subgenre in the prompt is a real constraint. Generic
+        # parent tags are used only when the user did not name a narrower one.
+        specific = positive - GENERIC_GENRES
+        return {
+            "required": specific or positive,
+            "forbidden": negative,
+        }
+
+    @classmethod
+    def _recommendation_style_issue(cls, station_prompt, genre):
+        policy = cls._station_genre_policy(station_prompt)
+        required = policy["required"]
+        forbidden = policy["forbidden"]
+        if not required and not forbidden:
+            return ""
+        _text, mentions = cls._genre_mentions(genre)
+        candidate = {item[2] for item in mentions}
+        expanded = set(candidate)
+        for item in candidate:
+            expanded.update(GENRE_PARENTS.get(item, set()))
+        if not candidate:
+            return "genre-missing"
+        if forbidden and expanded & forbidden:
+            return "genre-conflict"
+        if required and not expanded & required:
+            return "genre-conflict"
+        return ""
+
     def _translated_station_prompt(self, station_prompt, settings=None):
         """Translate a Ukrainian/Russian station-style prompt to English for AI search.
 
@@ -1066,7 +1187,37 @@ class RadioAPI:
             if isinstance(item, dict)
             and str(item.get("artist") or "").strip()
             and str(item.get("title") or "").strip()
-        ][:30]
+        ][:200]
+
+    def _merge_playlist_refs(self, *collections, limit=200):
+        merged = []
+        seen = set()
+        for collection in collections:
+            for item in collection or []:
+                artist = str(item.get("artist") or "").strip()
+                title = str(item.get("title") or "").strip()
+                key = (
+                    self._normalize_music_text(artist),
+                    self._normalize_music_text(title),
+                )
+                if not all(key) or key in seen:
+                    continue
+                seen.add(key)
+                merged.append({"artist": artist, "title": title})
+                if len(merged) >= limit:
+                    return merged
+        return merged
+
+    def _remember_ai_tracks(self, tracks):
+        settings = self.db.settings()
+        remembered = self._merge_playlist_refs(
+            tracks,
+            self._playlist_track_refs(settings.get("ai_previous_playlist", "[]")),
+        )
+        self.db.save_settings({
+            "ai_previous_playlist": json.dumps(remembered, ensure_ascii=False),
+        })
+        return remembered
 
     def _clear_ai_cache_files(self):
         cache_dir = (self.root / "downloads" / "queue").resolve()
@@ -1107,35 +1258,32 @@ class RadioAPI:
         if prompt_changed:
             previous_tracks = []
             LOGGER.info("Station genre prompt changed; starting an unrelated AI playlist")
-        elif cached_tracks:
-            previous_tracks = cached_tracks
         else:
-            previous_tracks = self._playlist_track_refs(
-                settings.get("ai_previous_playlist", "[]")
+            previous_tracks = self._merge_playlist_refs(
+                cached_tracks,
+                self._playlist_track_refs(settings.get("ai_previous_playlist", "[]")),
             )
         self.db.save_settings({
             "ai_playlist_prompt": current_prompt,
             "ai_previous_playlist": json.dumps(previous_tracks, ensure_ascii=False),
         })
+        removed_rows = self.db.purge_ai_library()
+        removed_files = self._clear_ai_cache_files()
         if prompt_changed:
-            removed_rows = self.db.purge_ai_library()
-            removed_files = self._clear_ai_cache_files()
             LOGGER.info(
                 "AI session reset after prompt change: removed_tracks=%s, removed_files=%s",
                 removed_rows,
                 removed_files,
             )
         else:
-            # Verified downloads are a warm playback buffer. Keeping them makes
-            # the next launch start in seconds instead of waiting for another
-            # recommendation and download cycle.
             LOGGER.info(
-                "AI session resumed: prompt_match=True, preserved_tracks=%s",
-                len(cached_tracks),
+                "Fresh AI session started: excluded_previous=%s, removed_tracks=%s, "
+                "removed_files=%s",
+                len(previous_tracks), removed_rows, removed_files,
             )
 
     def shutdown(self):
-        """Stop background work while preserving the verified warm buffer."""
+        """Stop background work and remember the active tracks as exclusions."""
         if self._shutdown_event.is_set():
             return {"ok": True, "already_closed": True}
         self._shutdown_event.set()
@@ -1146,18 +1294,17 @@ class RadioAPI:
             for track in self.db.tracks()
             if str(track.get("library_source") or "") == "ai"
         ]
-        self.db.save_settings({
-            "ai_previous_playlist": json.dumps(tracks, ensure_ascii=False),
-        })
+        remembered = self._remember_ai_tracks(tracks)
         LOGGER.info(
-            "AI cache preserved on shutdown: tracks=%s",
-            len(tracks),
+            "AI tracks remembered for anti-repeat on shutdown: active=%s, remembered=%s",
+            len(tracks), len(remembered),
         )
         return {
             "ok": True,
             "removed_tracks": 0,
             "removed_files": 0,
             "preserved_tracks": len(tracks),
+            "remembered_tracks": len(remembered),
         }
 
     def bootstrap(self):
@@ -2333,9 +2480,12 @@ class RadioAPI:
         providers = list(providers) if providers is not None else self._ai_providers_for_tracks(settings)
         search_max_tokens = _normalized_ai_max_tokens(settings)
         system_prompt = """Ти музичний директор радіо. Поверни тільки JSON:
-{"tracks":[{"artist":"...","title":"..."}],
- "similarTracks":[{"artist":"...","title":"..."}],
+{"tracks":[{"artist":"...","title":"...","genre":"..."}],
+ "similarTracks":[{"artist":"...","title":"...","genre":"..."}],
  "targetMood":["..."],"avoid":["..."]}
+
+Для кожного треку поле genre обов'язкове: вкажи 1-3 точні канонічні жанри.
+Не називай жанр зі стилю станції автоматично — вкажи реальний жанр саме треку.
 
 Спочатку самостійно добери рівно 10 конкретних треків, які відповідають стилю станції.
 Потім додай до них 10 схожих пісень, які підходять до першого списку або до загального настрою.
@@ -2430,6 +2580,7 @@ darkwave чи post-punk: українська та російськомовна 
                     self._normalize_music_text(title),
                 )
                 reason = str(value.get("reason") or "").strip()
+                genre = self._recommendation_genre(value)
                 if (
                     not artist or not title or not all(key)
                     or key in seen or key in excluded_keys
@@ -2447,6 +2598,15 @@ darkwave чи post-punk: українська та російськомовна 
                         "artist": artist,
                         "title": title,
                         "reason": "style-conflict",
+                    })
+                    continue
+                genre_issue = self._recommendation_style_issue(station_prompt, genre)
+                if genre_issue:
+                    skipped.append({
+                        "artist": artist,
+                        "title": title,
+                        "reason": genre_issue,
+                        "genre": genre,
                     })
                     continue
                 if blocked_legacy_artist(artist):
@@ -2469,6 +2629,7 @@ darkwave чи post-punk: українська та російськомовна 
                     "artist": artist,
                     "title": title,
                     "reason": reason,
+                    "genre": genre,
                 })
                 previous_artist_key = key[0]
             similar_seen = set(seen)
@@ -2484,6 +2645,7 @@ darkwave чи post-punk: українська та російськомовна 
                     self._normalize_music_text(title),
                 )
                 reason = str(value.get("reason") or "").strip()
+                genre = self._recommendation_genre(value)
                 if (
                     not artist or not title or not all(key)
                     or key in similar_seen or key in excluded_keys
@@ -2501,6 +2663,15 @@ darkwave чи post-punk: українська та російськомовна 
                         "artist": artist,
                         "title": title,
                         "reason": "style-conflict",
+                    })
+                    continue
+                genre_issue = self._recommendation_style_issue(station_prompt, genre)
+                if genre_issue:
+                    skipped.append({
+                        "artist": artist,
+                        "title": title,
+                        "reason": genre_issue,
+                        "genre": genre,
                     })
                     continue
                 if blocked_legacy_artist(artist):
@@ -2523,6 +2694,7 @@ darkwave чи post-punk: українська та російськомовна 
                     "artist": artist,
                     "title": title,
                     "reason": reason,
+                    "genre": genre,
                 })
                 previous_similar_artist_key = key[0]
             if not recommendations:
@@ -2633,8 +2805,9 @@ darkwave чи post-punk: українська та російськомовна 
                         )
 
                     repair_prompt = """Ти музичний директор. Поверни тільки короткий валідний JSON
-формату {"tracks":[{"artist":"...","title":"..."}]}. Рівно 5 реальних,
-відомих, офіційно виданих треків під заданий стиль. Без reason, Markdown і тексту
+формату {"tracks":[{"artist":"...","title":"...","genre":"..."}]}. Рівно 5 реальних,
+відомих, офіційно виданих треків під заданий стиль. Genre обов'язковий і має
+описувати реальний жанр треку. Без reason, Markdown і тексту
 поза JSON. Не повторюй excludeTracks."""
                     repaired = self._provider_chat_completion(
                         spec, repair_prompt, request_text, 0.1, 0.7, search_max_tokens,
@@ -3312,9 +3485,11 @@ darkwave чи post-punk: українська та російськомовна 
             youtube_id=source_id, youtube_title=source_title,
             status="ready", duration_ms=round(duration * 1000),
             bpm=analysis["bpm"], energy=analysis["energy"], mood=analysis["mood"],
+            genre=str(candidate["recommendation"].get("genre") or "").strip(),
             match_score=candidate["match_score"], library_source="ai",
         )
         result = self.db.track(track["id"])
+        self._remember_ai_tracks([result])
         result["source_query"] = candidate["query"]
         return result
 
@@ -3440,6 +3615,18 @@ darkwave чи post-punk: українська та російськомовна 
                 )
             except Exception:
                 duration_ms = 0
+            if not duration_ms and path.suffix.casefold() == ".wav":
+                try:
+                    import wave
+
+                    with wave.open(str(path), "rb") as audio_file:
+                        duration_ms = round(
+                            audio_file.getnframes()
+                            / max(1, audio_file.getframerate())
+                            * 1000
+                        )
+                except (OSError, EOFError, wave.Error):
+                    duration_ms = 0
             if not duration_ms:
                 duration_ms = round(max(1, spoken_word_count(speech_text)) / 2.4 * 1000)
             return {

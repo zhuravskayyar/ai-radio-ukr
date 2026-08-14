@@ -1209,6 +1209,35 @@ class Database:
             "openings": int(opening_count),
         }
 
+    def reset_runtime_session(self):
+        """Clear state that belongs to one application run.
+
+        Long-lived music cooldown history stays intact so restarting the app
+        cannot make recently played songs eligible again. Credentials,
+        station settings, imported music, facts and stories also remain.
+        """
+        with closing(self.connect()) as db, db:
+            counts = {
+                "memory": db.execute("SELECT COUNT(*) FROM host_memory").fetchone()[0],
+                "transitions": db.execute("SELECT COUNT(*) FROM transitions").fetchone()[0],
+                "history": db.execute("SELECT COUNT(*) FROM intro_history").fetchone()[0],
+                "openings": db.execute("SELECT COUNT(*) FROM host_openings").fetchone()[0],
+                "exposures": db.execute(
+                    "SELECT COUNT(*) FROM listener_exposures"
+                ).fetchone()[0],
+            }
+            db.execute("UPDATE tracks SET intro='',intro_speech='',intro_style=''")
+            db.execute("DELETE FROM transitions")
+            db.execute("DELETE FROM intro_history")
+            db.execute("DELETE FROM host_openings")
+            db.execute("DELETE FROM host_memory")
+            db.execute("DELETE FROM listener_exposures")
+            db.execute(
+                "UPDATE settings SET value=? WHERE key='listener_profile'",
+                (DEFAULTS["listener_profile"],),
+            )
+        return {key: int(value) for key, value in counts.items()}
+
     def recent_history(self, limit=50):
         with closing(self.connect()) as db, db:
             return [

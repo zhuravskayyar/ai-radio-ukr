@@ -126,8 +126,8 @@ class RadioQueueTests(unittest.TestCase):
                 "provider": "test-ai",
                 "candidate": json.dumps({
                     "tracks": [
-                        {"artist": "Linkin Park", "title": "Numb"},
-                        {"artist": "The Cure", "title": "Lovesong"},
+                        {"artist": "Linkin Park", "title": "Numb", "genre": "alternative rock"},
+                        {"artist": "The Cure", "title": "Lovesong", "genre": "alternative rock"},
                     ],
                     "targetMood": ["melancholic"],
                     "avoid": [],
@@ -158,12 +158,12 @@ class RadioQueueTests(unittest.TestCase):
                     ]
                     if spec["name"] == "nvidia"
                     else [
-                        {"artist": f"Artist {index}", "title": f"Track {index}", "reason": "fits"}
+                        {"artist": f"Artist {index}", "title": f"Track {index}", "reason": "fits", "genre": "rock"}
                         for index in range(1, 11)
                     ]
                 )
                 similar = [] if spec["name"] == "nvidia" else [
-                    {"artist": f"Similar {index}", "title": f"Song {index}", "reason": "near"}
+                    {"artist": f"Similar {index}", "title": f"Song {index}", "reason": "near", "genre": "rock"}
                     for index in range(1, 6)
                 ]
                 return {
@@ -204,9 +204,9 @@ class RadioQueueTests(unittest.TestCase):
                 "provider": "secondary",
                 "candidate": json.dumps({
                     "tracks": [
-                        {"artist": "First Artist", "title": "Shared Song"},
-                        {"artist": "Wrong Artist", "title": "Shared Song"},
-                        {"artist": "Third Artist", "title": "Different Song"},
+                        {"artist": "First Artist", "title": "Shared Song", "genre": "alternative rock"},
+                        {"artist": "Wrong Artist", "title": "Shared Song", "genre": "alternative rock"},
+                        {"artist": "Third Artist", "title": "Different Song", "genre": "alternative rock"},
                     ],
                     "similarTracks": [],
                 }),
@@ -260,6 +260,26 @@ class RadioQueueTests(unittest.TestCase):
                 for item in plan["skipped"]
             ))
 
+    def test_explicit_genre_gate_rejects_wrong_or_missing_genre(self):
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue("шансон", "alternative rock"),
+            "genre-conflict",
+        )
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue("шансон", ""),
+            "genre-missing",
+        )
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue("шансон", "russian chanson"),
+            "",
+        )
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue(
+                "alternative rock without pop", "dream pop",
+            ),
+            "genre-conflict",
+        )
+
     def test_modern_ru_ua_alt_rock_plan_filters_legacy_and_adjacent_artists(self):
         with tempfile.TemporaryDirectory() as directory:
             api = RadioAPI(Path(directory))
@@ -279,6 +299,7 @@ class RadioQueueTests(unittest.TestCase):
                 {"artist": "Пошлая Молли", "title": "Любимая песня твоей сестры", "reason": "new rock"},
                 {"artist": "Порнофильмы", "title": "Это пройдёт", "reason": "ru punk"},
             ]
+            tracks = [{**track, "genre": "alternative rock"} for track in tracks]
             response = {
                 "provider": "test-ai",
                 "candidate": json.dumps({
@@ -311,9 +332,9 @@ class RadioQueueTests(unittest.TestCase):
                 "provider": "test-ai",
                 "candidate": json.dumps({
                     "tracks": [
-                        {"artist": "Би-2", "title": "Серебро"},
-                        {"artist": "Аквариум", "title": "Рок-н-ролл мертв"},
-                        {"artist": "The Hardkiss", "title": "Жива"},
+                        {"artist": "Би-2", "title": "Серебро", "genre": "alternative rock"},
+                        {"artist": "Аквариум", "title": "Рок-н-ролл мертв", "genre": "alternative rock"},
+                        {"artist": "The Hardkiss", "title": "Жива", "genre": "alternative rock"},
                     ],
                 }, ensure_ascii=False),
                 "error": "",
@@ -585,7 +606,7 @@ class RadioQueueTests(unittest.TestCase):
                 "artist": "Generated Artist", "title": "Generated Track",
             }])
 
-    def test_startup_reuses_verified_ai_cache_and_remembers_last_playlist(self):
+    def test_startup_discards_ai_cache_and_remembers_it_as_anti_repeat(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             first = RadioAPI(root)
@@ -601,8 +622,8 @@ class RadioQueueTests(unittest.TestCase):
 
             restarted = RadioAPI(root)
 
-            self.assertTrue(stale_path.exists())
-            self.assertTrue([
+            self.assertFalse(stale_path.exists())
+            self.assertFalse([
                 track for track in restarted.db.tracks()
                 if track.get("library_source") == "ai"
             ])
@@ -698,6 +719,7 @@ class RadioQueueTests(unittest.TestCase):
 
             self.assertEqual(plan["tracks"][0], {
                 "artist": "Linkin Park", "title": "Numb", "reason": "alt rock",
+                "genre": "alt rock",
             })
             self.assertNotIn("queries", plan)
             self.assertEqual(
@@ -710,8 +732,8 @@ class RadioQueueTests(unittest.TestCase):
             api = RadioAPI(Path(directory))
             truncated = (
                 '{"tracks":['
-                '{"artist":"Linkin Park","title":"Numb"},'
-                '{"artist":"The Cure","title":"Lovesong"},'
+                '{"artist":"Linkin Park","title":"Numb","genre":"alternative rock"},'
+                '{"artist":"The Cure","title":"Lovesong","genre":"alternative rock"},'
             )
             response = {
                 "provider": "test-ai", "candidate": truncated, "error": "",

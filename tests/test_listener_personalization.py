@@ -120,6 +120,38 @@ class EditorialDistributionTests(unittest.TestCase):
 
 
 class ListenerFeedbackTests(unittest.TestCase):
+    def test_new_process_session_clears_memory_but_keeps_track_cooldown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = RadioAPI(root)
+            track = first.db.tracks()[0]
+            first.db.save_settings({
+                "listener_profile": json.dumps({
+                    "history": 0.9,
+                    "artist_drama": 0.8,
+                    "music_theory": 0.7,
+                    "strange_facts": 0.6,
+                    "nostalgia": 0.4,
+                    "lyrics": 0.3,
+                }),
+            })
+            first.db.remember("session-test", "{}", "2026-08-14T12:00:00+00:00")
+            first.db.add_history({
+                "content_type": "fact",
+                "display_text": "Old session copy",
+                "created_at": "2026-08-14T12:00:00+00:00",
+            })
+            first.db.add_radio_history(track, "2026-08-14T12:00:00+00:00")
+
+            restarted = RadioAPI(root)
+
+            self.assertEqual(
+                set(restarted.personalization.profile().values()), {0.5},
+            )
+            self.assertEqual(restarted.db.memory_items(), [])
+            self.assertEqual(restarted.db.recent_history(), [])
+            self.assertEqual(len(restarted.db.recent_radio_history()), 1)
+
     def test_story_selector_prefers_listener_interest_with_equal_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             db = Database(Path(directory) / "radio.db")
