@@ -57,8 +57,8 @@ DEFAULTS = {
     "queue_max_duration": "480",
     "queue_cache_max_gb": "3",
     "dynamic_discovery_enabled": "1",
-    "web_research_enabled": "0",
-    "browser_search_enabled": "0",
+    "web_research_enabled": "1",
+    "browser_search_enabled": "1",
     "licensed_sources_confirmed": "1",
     "auto_update_enabled": "1",
     "youtube_auth_browser": "off",
@@ -743,6 +743,21 @@ class Database:
                 if refreshed_pronunciations:
                     db.execute("DELETE FROM transitions")
                 db.execute("PRAGMA user_version=21")
+            if schema_version < 22:
+                # Source-backed intros are now the single production path.
+                # Keep the legacy keys for database/API compatibility, but
+                # force them on and discard cached template copy so the next
+                # preparation researches the real track automatically.
+                db.execute(
+                    "UPDATE settings SET value='1' "
+                    "WHERE key IN ('web_research_enabled','browser_search_enabled')"
+                )
+                db.execute(
+                    "UPDATE tracks SET intro='',intro_speech='',intro_style='' "
+                    "WHERE intro<>'' OR intro_speech<>'' OR intro_style<>''"
+                )
+                db.execute("DELETE FROM transitions")
+                db.execute("PRAGMA user_version=22")
             for row in db.execute("SELECT * FROM tracks"):
                 automatic = _auto_pronunciation_values(row["artist"], row["title"])
                 updates = {}

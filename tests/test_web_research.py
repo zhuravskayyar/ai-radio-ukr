@@ -187,17 +187,30 @@ class MusicResearchToolTests(unittest.TestCase):
 
 
 class RadioResearchIntegrationTests(unittest.TestCase):
-    def test_public_api_requires_explicit_setting(self):
+    def test_public_research_api_is_automatic_and_browser_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
             api = RadioAPI(Path(directory))
-            with patch.object(api.music_research, "execute") as execute:
+            with patch.object(
+                api.music_research, "execute", return_value={"ok": True},
+            ) as execute:
                 result = api.run_music_research_tool({
                     "tool": "search_music",
                     "arguments": {"query": "Ukrainian rock"},
                 })
-            execute.assert_not_called()
-            self.assertFalse(result["ok"])
-            self.assertIn("disabled", result["error"])
+            execute.assert_called_once()
+            self.assertTrue(result["ok"])
+            self.assertTrue(execute.call_args.kwargs["allow_browser"])
+
+    def test_settings_api_cannot_disable_automatic_research(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            result = api.save_settings({
+                "web_research_enabled": "0",
+                "browser_search_enabled": "0",
+            })
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["settings"]["web_research_enabled"], "1")
+            self.assertEqual(result["settings"]["browser_search_enabled"], "1")
 
     def test_search_metadata_is_given_to_ai_as_untrusted_candidates(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -250,6 +263,7 @@ class RadioResearchIntegrationTests(unittest.TestCase):
             ):
                 plan = api._queue_search_plan(
                     settings, providers=[{"name": "test-provider"}],
+                    use_research_tools=True,
                 )
 
             self.assertEqual(plan["tracks"][0]["title"], "Журавлі")
@@ -342,6 +356,47 @@ class RadioResearchIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 len(api.music_knowledge.cards_for_track(track["id"], True)), 1,
             )
+
+    def test_first_track_research_endpoint_uses_researched_story(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            track = api.db.tracks()[0]
+
+            def research(track_id, force=False):
+                del force
+                saved = api.add_music_story(track_id, {
+                    "category": "SONG_ORIGIN",
+                    "hook": "Запис почався з одного студійного експерименту.",
+                    "story_data": [
+                        "Музиканти змінили аранжування вже під час студійної роботи."
+                    ],
+                    "sources": [{
+                        "id": "source-1",
+                        "url": "https://example.com/interview",
+                        "title": "Studio interview",
+                        "tier": "B",
+                        "primary": False,
+                        "independent": True,
+                    }],
+                    "claims": [{
+                        "text": "Музиканти змінили аранжування вже під час студійної роботи.",
+                        "source_ids": ["source-1"],
+                    }],
+                    "confidence": "verified",
+                })
+                return {**saved, "cached": False}
+
+            with patch.object(
+                api, "research_track_story", side_effect=research,
+            ) as researched, patch.object(
+                api, "_ai_providers_for_intro", return_value=[],
+            ):
+                result = api.research_track_intro(track["id"])
+
+            researched.assert_called_once_with(track["id"], False)
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["intro"]["source_backed"])
+            self.assertIn("студій", result["intro"]["display_text"].casefold())
 
     def test_ai_search_query_must_keep_exact_track_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

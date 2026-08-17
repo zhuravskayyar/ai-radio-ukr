@@ -253,18 +253,7 @@ function ensureCharacterSettings() {
             <option value="1">Увімкнений · фоновий yt-dlp</option>
           </select>
         </label>
-        <label>Web-перевірка метаданих
-          <select data-setting="web_research_enabled">
-            <option value="0">Вимкнена</option>
-            <option value="1">YouTube API / yt-dlp</option>
-          </select>
-        </label>
-        <label>Playwright fallback
-          <select data-setting="browser_search_enabled">
-            <option value="0">Вимкнений</option>
-            <option value="1">Увімкнений · лише за потреби</option>
-          </select>
-        </label>
+        <p class="hint" data-auto-research-status><b>Web-підводки працюють автоматично.</b> AI формує запит, Playwright або HTTP-пошук знаходить джерела, а програма готує перевірену STORY без окремого перемикача.</p>
         <label>YouTube Auth для 18+ fallback
           <select data-setting="youtube_auth_browser">
             <option value="off">Вимкнено</option>
@@ -1347,10 +1336,6 @@ window.editPronunciation = async index => {
 
 window.researchTrackIntro = async index => {
   const track = state.tracks[index];
-  if (String(state.settings.web_research_enabled || '0') !== '1') {
-    toast('Увімкніть Web-перевірку музики в налаштуваннях і збережіть зміни');
-    return;
-  }
   toast(`Шукаю джерела й готую підводку: ${track.artist} — ${track.title}`);
   try {
     const result = await window.pywebview.api.research_track_intro(
@@ -1706,7 +1691,32 @@ async function ensureIntro(track, currentTrack, force = false) {
       speechText: track.intro_speech || track.intro,
     };
   }
-  const result = await window.pywebview.api.make_intro(track.id, currentTrack?.id || null, '');
+  let result = null;
+  let researchError = '';
+  try {
+    const researched = await window.pywebview.api.research_track_intro(
+      track.id,
+      currentTrack?.id || null,
+      false,
+    );
+    if (researched?.ok && researched.intro?.ok) {
+      result = researched.intro;
+    } else {
+      researchError = researched?.error || '';
+    }
+  } catch (error) {
+    researchError = error?.message || String(error);
+  }
+  if (!result) {
+    result = await window.pywebview.api.make_intro(
+      track.id,
+      currentTrack?.id || null,
+      '',
+    );
+    if (researchError && result?.fallback && !result.provider_error) {
+      result.provider_error = `Web research: ${researchError}`;
+    }
+  }
   if (result.ok) {
     track.intro = result.display_text || result.intro;
     track.intro_speech = result.speech_text || track.intro;

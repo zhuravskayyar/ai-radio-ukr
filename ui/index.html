@@ -194,19 +194,7 @@ OPENROUTER_API_KEY=sk-or-v1-ваш_ключ</pre>
                 <option value="0">Вимкнено — лише локальна музика</option>
               </select>
             </label>
-            <label>Web-перевірка музики
-              <select data-setting="web_research_enabled">
-                <option value="0">Вимкнено</option>
-                <option value="1">Увімкнено — API / yt-dlp</option>
-              </select>
-            </label>
-            <label>Браузерний fallback
-              <select data-setting="browser_search_enabled">
-                <option value="0">Вимкнено</option>
-                <option value="1">Playwright · лише коли API не допоміг</option>
-              </select>
-            </label>
-            <p class="hint">Після збереження AI може шукати не лише композиції, а й джерела для фактів та історій. Сторінки передаються AI як недовірений текст, а в ефір потрапляють лише твердження з URL джерела.</p>
+            <p class="hint" data-auto-research-status><b>Автоматичні web-підводки активні.</b> Для кожного голосового переходу AI шукає джерела, програма читає сторінки, а в ефір потрапляють лише твердження з URL джерела. Ручний дозвіл не потрібний.</p>
           </article>
           <article>
             <h3>Радіостанція</h3>

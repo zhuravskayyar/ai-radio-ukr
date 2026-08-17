@@ -71,7 +71,10 @@ class SmokeAPI(RadioAPI):
         })
         return result
 
-    def make_intro(self, track_id, current_track_id=None, verified_fact="", style=""):
+    def make_intro(
+        self, track_id, current_track_id=None, verified_fact="", style="",
+        **_kwargs,
+    ):
         track = next(track for track in self.db.tracks() if track["id"] == int(track_id))
         intro = (
             "Перевіряємо автоматичний ефір без довгих промов і зайвих церемоній. "
@@ -299,19 +302,11 @@ def verify():
           listenerProfileReady: document.querySelector('#listenerProfileSummary').textContent
             .includes('історія: 50%'),
           researchControlCount: document.querySelectorAll(
-            '[data-setting="web_research_enabled"]'
+            '[data-setting="web_research_enabled"], [data-setting="browser_search_enabled"]'
           ).length,
-          researchControlsSynced: (() => {
-            const controls = [...document.querySelectorAll(
-              '[data-setting="web_research_enabled"]'
-            )];
-            if (controls.length < 2) return false;
-            const value = controls[0].value === '1' ? '0' : '1';
-            controls[0].value = value;
-            controls[0].dispatchEvent(new Event('change', { bubbles: true }));
-            return controls.every(control => control.value === value)
-              && state.settings.web_research_enabled === value;
-          })(),
+          automaticResearchNotices: [...document.querySelectorAll(
+            '[data-auto-research-status]'
+          )].filter(node => node.textContent.includes('автоматичн')).length,
           visibleCards: [...document.querySelectorAll('#settings .settingsGrid > article')]
             .filter(node => getComputedStyle(node).display !== 'none').length
         }))()""")
@@ -389,8 +384,8 @@ def verify():
         assert simple_settings["genreVisible"] is True
         assert simple_settings["editorModeOption"] is True
         assert simple_settings["listenerProfileReady"] is True
-        assert simple_settings["researchControlCount"] >= 2
-        assert simple_settings["researchControlsSynced"] is True
+        assert simple_settings["researchControlCount"] == 0
+        assert simple_settings["automaticResearchNotices"] >= 1
         assert simple_settings["visibleCards"] == 1
     except BaseException as exc:
         failures.append(exc)

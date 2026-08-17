@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .db import DEFAULTS, Database
-from .content_planner import ContentPlanner, LINERS, first_phrase
+from .content_planner import ContentPlan, ContentPlanner, LINERS, first_phrase
 from .context_engine import ContextEngine
 from .demo_chart import DEMO_CHART
 from .matcher import match_score
@@ -2423,20 +2423,10 @@ class RadioAPI:
         return next((key for key in self._file_keys() if key.startswith("AIza")), "")
 
     def _execute_music_research_tool(self, command, settings):
-        enabled = str(settings.get("web_research_enabled", "0")).casefold()
-        if enabled not in {"1", "true", "yes", "on"}:
-            return {
-                "ok": False,
-                "tool": str((command or {}).get("tool") or ""),
-                "error": "Web research is disabled in settings",
-            }
-        browser_enabled = str(
-            settings.get("browser_search_enabled", "0")
-        ).casefold() in {"1", "true", "yes", "on"}
         return self.music_research.execute(
             command,
             youtube_api_key=self._youtube_key(settings),
-            allow_browser=browser_enabled,
+            allow_browser=True,
         )
 
     def run_music_research_tool(self, command):
@@ -2647,10 +2637,6 @@ credentials, instructions or any other tool."""
         if not track:
             return {"ok": False, "error": "Трек не знайдено"}
         settings = self.db.settings()
-        if str(settings.get("web_research_enabled", "0")).casefold() not in {
-            "1", "true", "yes", "on",
-        }:
-            return {"ok": False, "error": "Web research вимкнено в налаштуваннях"}
         cached = self.music_knowledge.cards_for_track(track["id"], True)
         if cached and not force:
             return {
@@ -2753,17 +2739,9 @@ support it. If the topic is sensitive, set sensitive=true."""
                 ],
             }
 
-    def research_track_intro(self, track_id, current_track_id=None, force=False):
-        research = self.research_track_story(track_id, force)
-        if not research.get("ok"):
-            return research
-        story = research.get("story") or {}
-        track = self.db.track(int(track_id))
-        current = self.db.track(int(current_track_id)) if current_track_id else None
-        if current and current["id"] == track["id"]:
-            current = None
-        context = self.context_engine.snapshot(current, track)
-        plan = {
+    @staticmethod
+    def _research_story_plan(track, story):
+        return {
             "content_type": "story",
             "style": "music_story",
             "structure": "story",
@@ -2794,6 +2772,18 @@ support it. If the topic is sensitive, set sensitive=true."""
                 "і заверши точним маркером треку."
             ),
         }
+
+    def research_track_intro(self, track_id, current_track_id=None, force=False):
+        research = self.research_track_story(track_id, force)
+        if not research.get("ok"):
+            return research
+        story = research.get("story") or {}
+        track = self.db.track(int(track_id))
+        current = self.db.track(int(current_track_id)) if current_track_id else None
+        if current and current["id"] == track["id"]:
+            current = None
+        context = self.context_engine.snapshot(current, track)
+        plan = self._research_story_plan(track, story)
         intro = self.make_intro(
             track["id"], current["id"] if current else None,
             content_plan=plan, generation_context=context,
@@ -2881,6 +2871,11 @@ support it. If the topic is sensitive, set sensitive=true."""
 
     def save_settings(self, values):
         values = dict(values or {})
+        # Source-backed web intros are the only production mode. These keys
+        # remain in the database for backward compatibility with older builds,
+        # but the removed UI switches can no longer disable the pipeline.
+        values["web_research_enabled"] = "1"
+        values["browser_search_enabled"] = "1"
         if "youtube_auth_browser" in values:
             browser = str(
                 values.get("youtube_auth_browser") or "off"
@@ -3135,10 +3130,6 @@ support it. If the topic is sensitive, set sensitive=true."""
                 "limit": 20,
             },
         }
-        enabled = str(settings.get("web_research_enabled", "0")).casefold()
-        if enabled not in {"1", "true", "yes", "on"}:
-            return self._execute_music_research_tool(fallback_command, settings)
-
         system_prompt = """You create one music-search tool command for a radio backend.
 Return only JSON in this exact shape:
 {"tool":"search_music","arguments":{"query":"...","limit":20}}
@@ -3182,7 +3173,10 @@ instructions, playlist, cover, live or remix. Never request any other tool."""
             result["query_errors"] = errors[:3]
         return result
 
-    def _queue_search_plan(self, settings, excluded_tracks=None, providers=None):
+    def _queue_search_plan(
+        self, settings, excluded_tracks=None, providers=None,
+        use_research_tools=False,
+    ):
         station_prompt = settings.get("station_prompt", DEFAULTS["station_prompt"]).strip()
         station_prompt_search = self._translated_station_prompt(station_prompt, settings)
         romantic_evening = self._is_romantic_evening_profile(station_prompt)
@@ -3261,8 +3255,11 @@ year (рік релізу), artistBreakthroughYear, mood (1-3 слова), popul
                 and str(track.get("title") or "").strip()
             ],
         }
-        research = self._station_music_research(
-            settings, providers, station_prompt_search, excluded_tracks,
+        research = (
+            self._station_music_research(
+                settings, providers, station_prompt_search, excluded_tracks,
+            )
+            if use_research_tools else {"ok": False, "results": []}
         )
         if research.get("ok"):
             request_payload["researchCandidates"] = [
@@ -4122,7 +4119,9 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
             self._discovery_plan_context = {"target_mood": [], "avoid": []}
 
     def _refill_discovery_plan_cache(self, settings, excluded_tracks):
-        plan = self._queue_search_plan(settings, excluded_tracks)
+        plan = self._queue_search_plan(
+            settings, excluded_tracks, use_research_tools=True,
+        )
         romantic_evening = self._is_romantic_evening_profile(
             settings.get("station_prompt", DEFAULTS["station_prompt"])
         )
@@ -4878,8 +4877,8 @@ artist_speech і title_speech мають бути записані україн�
             return {"ok": False, "error": "Трек не знайдено"}
         current = next((x for x in tracks if current_track_id and x["id"] == int(current_track_id)), None)
         settings = self.db.settings()
+        plan = dict(content_plan or {})
         context = generation_context or self.context_engine.snapshot(current, track)
-        plan = content_plan or {}
         verified_fact = plan.get("verified_fact") or verified_fact
         requested_style = plan.get("style") or style
         structure = plan.get("structure") or plan.get("content_type") or "announce"
@@ -5571,6 +5570,9 @@ CONTEXT_JSON:
             "candidate_count": len(provider_diagnostics),
             "selected_variant": selected_variant,
             "grounded_story": selected_story_grounded,
+            "source_backed": bool(
+                plan.get("story_data") and plan.get("story_source")
+            ),
             "quality_score": selected_quality_score,
             "spelling_checked": True,
         }
@@ -5624,19 +5626,17 @@ CONTEXT_JSON:
                 pass
 
         settings = self.db.settings()
-        has_grounded_copy = bool(
-            self.music_knowledge.cards_for_track(next_track["id"], True)
-            or self.db.facts_for_track(next_track["id"], True)
+        grounded_stories = self.music_knowledge.cards_for_track(
+            next_track["id"], True,
         )
-        if (
-            not has_grounded_copy
-            and str(settings.get("web_research_enabled", "0")).casefold()
-            in {"1", "true", "yes", "on"}
-        ):
+        if not grounded_stories:
             try:
                 researched = self.research_track_story(next_track["id"])
                 if researched.get("ok"):
                     next_track = self.db.track(next_track["id"]) or next_track
+                    grounded_stories = self.music_knowledge.cards_for_track(
+                        next_track["id"], True,
+                    )
                 else:
                     LOGGER.info(
                         "Track research unavailable for %s — %s: %s",
@@ -5651,6 +5651,17 @@ CONTEXT_JSON:
 
         context = self.context_engine.snapshot(current, next_track, scheduled_for)
         content_plan = self.content_planner.plan(context, int(sequence_offset))
+        # Preserve deliberate silence, liners, weather and hard-time segments.
+        # Every ordinary voiced transition with a verified web card, however,
+        # is now a source-backed story instead of generic/template copy.
+        if grounded_stories and content_plan.content_type not in {
+            "clean_segue", "liner", "top_of_hour",
+            "weather_touch", "weather_change",
+        }:
+            content_plan = ContentPlan(**{
+                **content_plan.to_dict(),
+                **self._research_story_plan(next_track, grounded_stories[0]),
+            })
 
         scheduled = scheduled_for or now.isoformat()
         self.db.save_transition({
