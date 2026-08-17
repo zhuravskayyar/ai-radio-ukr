@@ -57,6 +57,8 @@ DEFAULTS = {
     "queue_max_duration": "480",
     "queue_cache_max_gb": "3",
     "dynamic_discovery_enabled": "1",
+    "web_research_enabled": "0",
+    "browser_search_enabled": "0",
     "licensed_sources_confirmed": "1",
     "auto_update_enabled": "1",
     "youtube_auth_browser": "off",

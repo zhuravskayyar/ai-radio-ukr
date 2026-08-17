@@ -252,6 +252,18 @@ function ensureCharacterSettings() {
             <option value="1">Увімкнений · фоновий yt-dlp</option>
           </select>
         </label>
+        <label>Web-перевірка метаданих
+          <select data-setting="web_research_enabled">
+            <option value="0">Вимкнена</option>
+            <option value="1">YouTube API / yt-dlp</option>
+          </select>
+        </label>
+        <label>Playwright fallback
+          <select data-setting="browser_search_enabled">
+            <option value="0">Вимкнений</option>
+            <option value="1">Увімкнений · лише за потреби</option>
+          </select>
+        </label>
         <label>YouTube Auth для 18+ fallback
           <select data-setting="youtube_auth_browser">
             <option value="off">Вимкнено</option>
