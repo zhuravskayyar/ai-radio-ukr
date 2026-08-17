@@ -1,256 +1,43 @@
-import json
 import re
 import unicodedata
-from pathlib import Path
+
+from radio_pronunciation import DEFAULT_PRONUNCIATION_ENGINE, detect_script
 
 
-def _golden_tts_entries() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """Load maintainable high-priority TTS replacements without blocking startup."""
-    path = Path(__file__).resolve().parents[1] / "data" / "tts_pronunciations.json"
-    try:
-        entries = json.loads(path.read_text(encoding="utf-8")).get("entries", [])
-    except (OSError, ValueError, TypeError):
-        return {}, {}, {}
-    names = {}
-    titles = {}
-    symbols = {}
-    for entry in entries:
-        original = str(entry.get("original") or "").strip()
-        spoken = str(entry.get("tts") or "").strip()
-        if not original or not spoken:
-            continue
-        if str(entry.get("language") or "") == "symbol":
-            symbols[original] = spoken
-        elif str(entry.get("kind") or "") == "title":
-            titles[original] = spoken
-        else:
-            names[original] = spoken
-    return names, titles, symbols
-
-
-GOLDEN_PRONUNCIATIONS, GOLDEN_TITLE_PRONUNCIATIONS, SYMBOL_PRONUNCIATIONS = _golden_tts_entries()
-
-
-# These entries are deliberately curated, not generated. Track-specific values
-# live in SQLite; this small dictionary only seeds pronunciations we have
-# explicitly checked.
-PRONUNCIATIONS = {
-    "Scorpions": "Скорпіонс",
-    "Depeche Mode": "Депеш Мод",
-    "The Weeknd": "Зе Вікенд",
-    "Billie Eilish": "Біллі Айліш",
-    "Måneskin": "Манескін",
-    "SZA": "Сіза",
-    "Dua Lipa": "Дуа Ліпа",
-    "Linkin Park": "Лінкін Парк",
-    "The Offspring": "Зе Офспрінг",
-    "Three Days Grace": "Трі Дейз Ґрейс",
-    "Black Sabbath": "Блек Саббат",
-    "Creedence Clearwater Revival": "Кріденс Клірвотер Рівайвал",
-    "Kiss": "Кіс",
-    "Bon Jovi": "Бон Джові",
-    **GOLDEN_PRONUNCIATIONS,
-}
-
-TITLE_PRONUNCIATIONS = {
-    "Living and Dying": "Лівін енд Дайін",
-    "The Kids Aren't Alright": "Зе Кідз Арнт Олрайт",
-    "Have You Ever Seen The Rain": "Гев Ю Евер Сін Зе Рейн",
-    "I Was Made For Lovin' You": "Ай Воз Мейд Фор Лавін Ю",
-    "Runaway": "Ранавей",
-    "Human Race": "Х'юмен Рейс",
-    "Paranoid": "Параноїд",
-    **GOLDEN_TITLE_PRONUNCIATIONS,
-}
-
-_LATIN_WORD_PRONUNCIATIONS = {
-    "the": "зе",
-    "a": "ей",
-    "and": "енд",
-    "of": "ов",
-    "feat": "фіт",
-    "featuring": "фічерінг",
-    "ft": "фіт",
-    "dj": "ді-джей",
-    "mc": "ем-сі",
-    "michael": "майкл",
-    "mike": "майк",
-    "sean": "шон",
-    "paul": "пол",
-    "rare": "рер",
-    "radio": "рейдіо",
-    "love": "лав",
-    "live": "лайв",
-    "offspring": "офспрінг",
-    "kids": "кідз",
-    "aren't": "арнт",
-    "arent": "арнт",
-    "alright": "олрайт",
-    "creedence": "кріденс",
-    "clearwater": "клірвотер",
-    "revival": "рівайвал",
-    "have": "гев",
-    "you": "ю",
-    "ever": "евер",
-    "seen": "сін",
-    "rain": "рейн",
-    "kiss": "кіс",
-    "i": "ай",
-    "was": "воз",
-    "made": "мейд",
-    "for": "фор",
-    "lovin": "лавін",
-    "bon": "бон",
-    "jovi": "джові",
-    "runaway": "ранаве́й",
-    "linkin": "лінкін",
-    "park": "парк",
-    "given": "ґівен",
-    "up": "ап",
-}
-
-_LATIN_LETTER_NAMES = {
-    "a": "ей", "b": "бі", "c": "сі", "d": "ді", "e": "і",
-    "f": "еф", "g": "джі", "h": "ейч", "i": "ай", "j": "джей",
-    "k": "кей", "l": "ел", "m": "ем", "n": "ен", "o": "оу",
-    "p": "пі", "q": "к'ю", "r": "ар", "s": "ес", "t": "ті",
-    "u": "ю", "v": "ві", "w": "дабл-ю", "x": "екс",
-    "y": "вай", "z": "зі",
-}
-
-_LATIN_GROUPS = (
-    ("tion", "шн"), ("sion", "жн"), ("tch", "ч"),
-    ("ough", "оу"), ("eigh", "ей"), ("sch", "ск"),
-    ("ch", "ч"), ("sh", "ш"), ("ph", "ф"), ("th", "с"),
-    ("wh", "в"), ("ck", "к"), ("ng", "нг"), ("qu", "кв"),
-    ("ee", "і"), ("ea", "і"), ("oo", "у"), ("ou", "ау"),
-    ("ow", "ау"), ("ai", "ей"), ("ay", "ей"), ("oi", "ой"),
-    ("oy", "ой"),
-)
-
-_LATIN_SINGLE = {
-    "a": "а", "b": "б", "d": "д", "e": "е", "f": "ф",
-    "h": "г", "i": "і", "j": "дж", "k": "к", "l": "л",
-    "m": "м", "n": "н", "o": "о", "p": "п", "q": "к",
-    "r": "р", "s": "с", "t": "т", "u": "у", "v": "в",
-    "w": "в", "x": "кс", "y": "і", "z": "з",
-}
-
-
-def _latin_word_to_ukrainian(word: str) -> str:
-    raw = word.strip()
-    lowered = raw.casefold()
-    if lowered in _LATIN_WORD_PRONUNCIATIONS:
-        return _LATIN_WORD_PRONUNCIATIONS[lowered]
-    letters_only = re.sub(r"[^A-Za-z]", "", raw)
-    if raw.isupper() and 1 < len(letters_only) <= 5:
-        return "-".join(_LATIN_LETTER_NAMES[char.casefold()] for char in letters_only)
-
-    result = []
-    index = 0
-    while index < len(lowered):
-        char = lowered[index]
-        if not ("a" <= char <= "z"):
-            result.append("-" if char in "-'’" else char)
-            index += 1
-            continue
-        matched = False
-        for group, spoken in _LATIN_GROUPS:
-            if lowered.startswith(group, index):
-                result.append(spoken)
-                index += len(group)
-                matched = True
-                break
-        if matched:
-            continue
-        if char == "c":
-            result.append("с" if index + 1 < len(lowered) and lowered[index + 1] in "eiy" else "к")
-        elif char == "g":
-            result.append("дж" if index + 1 < len(lowered) and lowered[index + 1] in "eiy" else "г")
-        else:
-            result.append(_LATIN_SINGLE.get(char, char))
-        index += 1
-    return "".join(result)
-
-
-def _russian_word_to_ukrainian(word: str) -> str:
-    result = []
-    vowels = "аеєиіїоуюя"
-    for index, char in enumerate(word):
-        lowered = char.casefold()
-        previous = word[index - 1].casefold() if index else ""
-        if lowered == "ё":
-            spoken = "йо" if index == 0 or previous in vowels + "ьъ" else "ьо"
-        elif lowered == "ы":
-            spoken = "и"
-        elif lowered == "э":
-            spoken = "е"
-        elif lowered == "и":
-            spoken = "і"
-        elif lowered == "е" and (index == 0 or previous in vowels + "ьъ"):
-            spoken = "є"
-        elif lowered == "г":
-            spoken = "ґ"
-        elif lowered == "ъ":
-            spoken = ""
-        else:
-            spoken = lowered
-        if char.isupper() and spoken:
-            spoken = spoken[0].upper() + spoken[1:]
-        result.append(spoken)
-    return "".join(result)
+# Compatibility mappings are views of the canonical exact dictionary. There
+# are no pronunciation rules or curated names duplicated in this module.
+PRONUNCIATIONS = DEFAULT_PRONUNCIATION_ENGINE.exact_mappings("artist")
+TITLE_PRONUNCIATIONS = DEFAULT_PRONUNCIATION_ENGINE.exact_mappings("title")
+SYMBOL_PRONUNCIATIONS = DEFAULT_PRONUNCIATION_ENGINE.exact_mappings("symbol")
 
 
 def detect_text_language(value: str) -> str:
-    value = value or ""
-    latin = bool(re.search(r"[A-Za-z]", value))
-    cyrillic = bool(re.search(r"[А-Яа-яІіЇїЄєҐґЁёЫыЭэЪъ]", value))
-    if latin and cyrillic:
-        return "mixed"
-    if latin:
-        return "en"
-    if re.search(r"[ЁёЫыЭэЪъ]", value):
-        return "ru"
-    if cyrillic:
-        return "uk_or_ru"
-    return "other"
+    language = detect_script(value or "")
+    return "uk_or_ru" if language == "uk" else language
 
 
 def phonetic_ukrainian(value: str) -> tuple[str, float, str]:
     """Return editable Ukrainian phonetic spelling for StyleTTS2."""
-    value = unicodedata.normalize("NFC", (value or "").strip())
-    language = detect_text_language(value)
-    confidence = 1.0
-    spoken = value
-    if re.search(r"[A-Za-z]", spoken):
-        spoken = re.sub(
-            r"[A-Za-z]+(?:['’\-][A-Za-z]+)*",
-            lambda match: _latin_word_to_ukrainian(match.group(0)),
-            spoken,
-        )
-        confidence = min(confidence, 0.58)
-    if re.search(r"[ЁёЫыЭэЪъ]", spoken):
-        spoken = re.sub(
-            r"[А-Яа-яЁёЫыЭэЪъ]+",
-            lambda match: _russian_word_to_ukrainian(match.group(0)),
-            spoken,
-        )
-        confidence = min(confidence, 0.82)
-    return re.sub(r"\s+", " ", spoken).strip(), confidence, language
+    result = DEFAULT_PRONUNCIATION_ENGINE.transcribe_with_meta(value)
+    return result.spoken, result.confidence, detect_text_language(value)
 
 
 def automatic_pronunciations(artist: str, title: str) -> dict:
     curated_artist, curated_title = suggested_pronunciations(artist, title)
     clean_title = _clean_track_title(title)
-    artist_auto, artist_confidence, artist_language = phonetic_ukrainian(artist)
-    title_auto, title_confidence, title_language = phonetic_ukrainian(clean_title)
+    artist_result = DEFAULT_PRONUNCIATION_ENGINE.transcribe_with_meta(
+        artist, kind="artist"
+    )
+    title_result = DEFAULT_PRONUNCIATION_ENGINE.transcribe_with_meta(
+        clean_title, kind="title"
+    )
     return {
-        "artist_speech": curated_artist or artist_auto,
-        "title_speech": curated_title or title_auto,
-        "artist_speech_confidence": 1.0 if curated_artist else artist_confidence,
-        "title_speech_confidence": 1.0 if curated_title else title_confidence,
-        "artist_language": artist_language,
-        "title_language": title_language,
+        "artist_speech": curated_artist or artist_result.spoken,
+        "title_speech": curated_title or title_result.spoken,
+        "artist_speech_confidence": 1.0 if curated_artist else artist_result.confidence,
+        "title_speech_confidence": 1.0 if curated_title else title_result.confidence,
+        "artist_language": detect_text_language(artist),
+        "title_language": detect_text_language(clean_title),
         "pronunciation_source": "curated" if curated_artist or curated_title else "auto_local",
     }
 
@@ -410,9 +197,13 @@ def rank_in_place(rank: int) -> str:
 
 
 def suggested_pronunciations(artist: str, title: str) -> tuple[str, str]:
-    artist_speech = PRONUNCIATIONS.get((artist or "").strip(), "")
+    artist_speech = DEFAULT_PRONUNCIATION_ENGINE.exact_lookup(
+        (artist or "").strip(), kind="artist"
+    ) or ""
     clean_title = (title or "").strip()
-    title_speech = TITLE_PRONUNCIATIONS.get(clean_title, "")
+    title_speech = DEFAULT_PRONUNCIATION_ENGINE.exact_lookup(
+        clean_title, kind="title"
+    ) or ""
     if not title_speech:
         for known, spoken in TITLE_PRONUNCIATIONS.items():
             if clean_title.casefold().startswith(known.casefold()):
@@ -620,12 +411,7 @@ def _spoken_temperature(match) -> str:
 def normalize_for_speech(text: str, tracks=()) -> str:
     """Build a stable Edge/Piper-friendly copy without changing display text."""
     speech = normalize_linguistic(text)
-    mappings = {
-        original.casefold(): (original, spoken)
-        for original, spoken in (
-            list(PRONUNCIATIONS.items()) + list(TITLE_PRONUNCIATIONS.items())
-        )
-    }
+    mappings = {}
     for track in tracks or ():
         artist = str(track.get("artist", "")).strip()
         title = str(track.get("title", "")).strip()
@@ -654,13 +440,7 @@ def normalize_for_speech(text: str, tracks=()) -> str:
         mappings.values(), key=lambda item: len(item[0]), reverse=True
     ):
         speech = _replace_case_insensitive(speech, original, spoken)
-    for original, spoken in SYMBOL_PRONUNCIATIONS.items():
-        speech = _replace_case_insensitive(speech, original, spoken)
-    speech = re.sub(
-        r"[A-Za-z]+(?:['’\-][A-Za-z]+)*",
-        lambda match: _latin_word_to_ukrainian(match.group(0)),
-        speech,
-    )
+    speech = DEFAULT_PRONUNCIATION_ENGINE.transcribe(speech)
     speech = speech.replace("&", " і ")
     speech = re.sub(r"\b(?:feat(?:uring)?|ft)\.?", "за участю", speech, flags=re.IGNORECASE)
     speech = re.sub(r"[!?]+", "", speech)

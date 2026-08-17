@@ -57,6 +57,8 @@ DEFAULTS = {
     "queue_max_duration": "480",
     "queue_cache_max_gb": "3",
     "dynamic_discovery_enabled": "1",
+    "web_research_enabled": "0",
+    "browser_search_enabled": "0",
     "licensed_sources_confirmed": "1",
     "auto_update_enabled": "1",
     "youtube_auth_browser": "off",
@@ -1296,6 +1298,17 @@ class Database:
                 dict(row) for row in db.execute(
                     "SELECT * FROM radio_history ORDER BY id DESC LIMIT ?",
                     (int(limit),),
+                )
+            ]
+
+    def radio_history_since(self, played_since, limit=5000):
+        """Return recently aired tracks for time-based anti-repeat rules."""
+        with closing(self.connect()) as db, db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM radio_history WHERE played_at>=? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (str(played_since), int(limit)),
                 )
             ]
 
