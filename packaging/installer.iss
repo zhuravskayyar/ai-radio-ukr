@@ -1,5 +1,5 @@
 #define AppName "Vector Radio"
-#define AppVersion "1.0.0.8"
+#define AppVersion "1.0.0.9"
 #define AppPublisher "Vector Radio"
 #define PythonArchive "python-3.11.9-embed-amd64.zip"
 #define WebViewInstaller "MicrosoftEdgeWebview2Setup.exe"

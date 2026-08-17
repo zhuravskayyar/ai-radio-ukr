@@ -186,7 +186,11 @@ def cmudict_lookup(word: str) -> Optional[str]:
         pronunciations = pronouncing.phones_for_word(normalized)
         if pronunciations:
             return pronunciations[0]
-    if cmudict is not None:
+    # pronouncing is already backed by CMUdict. When it reports a miss,
+    # rebuilding cmudict.dict() cannot find a different answer and is very
+    # expensive in the embedded Windows runtime. Only use the direct package
+    # as a fallback when pronouncing itself is unavailable.
+    elif cmudict is not None:
         pronunciations = cmudict.dict().get(normalized, ())
         if pronunciations:
             first = pronunciations[0]
