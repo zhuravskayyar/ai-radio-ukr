@@ -55,6 +55,13 @@ HOST_PROMPT_VERSION = "2026-08-14-fact-editor-personalization-v1"
 # in this gate, while era, language and mood stay in the AI selection prompt.
 GENRE_ALIASES = {
     "alternative_rock": ("alternative rock", "alt rock", "альтернативний рок", "альт рок"),
+    "pop_rock": ("pop rock", "pop-rock", "поп рок", "поп-рок"),
+    "emo_rock": ("emo rock", "emo-rock", "емо рок", "емо-рок"),
+    "pop_punk": ("pop punk", "pop-punk", "поп панк", "поп-панк"),
+    "indie_rock": ("indie rock", "indie-rock", "інді рок", "інді-рок"),
+    "melodic_rock": ("melodic rock", "melodic guitar rock", "мелодійний рок"),
+    "festival_rock": ("festival rock", "festival-rock", "фестивальний рок"),
+    "art_rock": ("art rock", "art-rock", "арт рок", "арт-рок"),
     "dream_pop": ("dream pop", "dream-pop", "дрім поп", "дрим поп"),
     "post_punk": ("post punk", "post-punk", "постпанк", "пост панк"),
     "darkwave": ("darkwave", "dark wave", "дарквейв", "дарк вейв"),
@@ -85,6 +92,13 @@ GENRE_ALIASES = {
 
 GENRE_PARENTS = {
     "alternative_rock": {"rock"},
+    "pop_rock": {"pop", "rock"},
+    "emo_rock": {"rock"},
+    "pop_punk": {"pop", "punk", "rock"},
+    "indie_rock": {"indie", "rock"},
+    "melodic_rock": {"rock"},
+    "festival_rock": {"rock"},
+    "art_rock": {"rock"},
     "post_punk": {"punk", "rock"},
     "dream_pop": {"pop"},
     "darkwave": {"electronic"},
@@ -94,6 +108,51 @@ GENRE_PARENTS = {
 GENERIC_GENRES = {
     "rock", "pop", "electronic", "metal", "punk", "indie", "folk",
 }
+
+
+ROMANTIC_EVENING_MIN_SCORE = 72.0
+ROMANTIC_EVENING_SEED_TRACKS = (
+    {"artist": "Animal ДжаZ", "title": "Три полоски", "year": 2007},
+    {"artist": "Валентин Стрыкало", "title": "Наше лето"},
+    {"artist": "Валентин Стрыкало", "title": "Кладбище самолётов"},
+    {"artist": "Нервы", "title": "Кофе мой друг", "year": 2012},
+    {"artist": "Нервы", "title": "Слишком влюблён"},
+    {"artist": "Бумбокс", "title": "Вахтерам", "year": 2006},
+    {"artist": "Бумбокс", "title": "Та4то", "year": 2007},
+    {"artist": "Бумбокс", "title": "Квіти в волоссі"},
+    {"artist": "Фіолет", "title": "Кохана"},
+    {"artist": "Фіолет", "title": "Романтика"},
+)
+ROMANTIC_EVENING_BLOCKED_ARTISTS = (
+    "Земфира", "Земфіра", "ДДТ", "Сплин", "Би-2", "Бі-2", "Кино",
+    "Кіно", "Виктор Цой", "Віктор Цой", "Аквариум", "Акваріум",
+    "Чайф", "Машина времени", "Машина часу", "Алиса", "Аліса",
+    "Крематорий", "Крематорій", "Наутилус Помпилиус",
+)
+ROMANTIC_EVENING_GENRES = {
+    "alternative_rock", "pop_rock", "emo_rock", "pop_punk",
+    "indie_rock", "melodic_rock", "festival_rock",
+}
+ROMANTIC_EVENING_MOOD_WORDS = {
+    "romantic", "romance", "nostalgic", "nostalgia", "warm", "bittersweet",
+    "youthful", "evening", "intimate", "longing", "tender", "love",
+    "романтичний", "романтична", "романтика", "ностальгія", "теплий",
+    "тепла", "вечірній", "вечір", "ніжний", "ніжність", "кохання",
+    "молодіжний", "молодість", "меланхолійний", "романтичный", "романтика",
+    "ностальгия", "тёплый", "теплый", "вечерний", "вечер", "нежный",
+    "нежность", "любовь", "молодёжный", "молодежный", "меланхоличный",
+}
+ROMANTIC_EVENING_FORBIDDEN_GENRE_PHRASES = (
+    "classic russian rock", "soviet rock", "post soviet rock", "bard rock",
+    "chanson", "estrada", "traditional rock", "post punk", "darkwave",
+    "art rock", "singer songwriter", "heavy metal", "metalcore", "hardcore",
+    "rap only", "dance pop only", "slow acoustic", "классический русский рок",
+    "советский рок", "бард рок", "шансон", "эстрада", "пост панк",
+    "дарквейв", "арт рок", "тяжёлый метал", "тяжелый метал", "металкор",
+    "хардкор", "акустическая баллада", "класичний російський рок",
+    "радянський рок", "бард рок", "естрада", "постпанк", "арт рок",
+    "важкий метал", "акустична балада",
+)
 
 
 def _normalized_ai_max_tokens(settings=None):
@@ -1062,14 +1121,177 @@ class RadioAPI:
     def _normalized_station_prompt(value):
         return " ".join(str(value or "").casefold().split())
 
+    @classmethod
+    def _is_romantic_evening_profile(cls, station_prompt):
+        text = cls._normalized_station_prompt(station_prompt)
+        romantic_mode = any(
+            phrase in text
+            for phrase in (
+                "romantic evening", "романтичний вечір", "романтический вечер",
+            )
+        )
+        seed_artists = {
+            cls._normalize_music_text(seed["artist"])
+            for seed in ROMANTIC_EVENING_SEED_TRACKS
+        }
+        prompt_key = cls._normalize_music_text(text)
+        mentioned_seeds = sum(artist in prompt_key for artist in seed_artists)
+        return romantic_mode or mentioned_seeds >= 2
+
+    @classmethod
+    def _romantic_evening_queries(cls, lane_index=0):
+        seeds = list(ROMANTIC_EVENING_SEED_TRACKS)
+        start = (max(0, int(lane_index)) * 3) % len(seeds)
+        selected = [seeds[(start + offset) % len(seeds)] for offset in range(3)]
+        queries = []
+        for seed in selected:
+            label = f'{seed["artist"]} {seed["title"]}'
+            queries.extend((
+                f"songs similar to {label}",
+                f"песни похожие на {label}",
+            ))
+        queries.extend((
+            "romantic alternative pop rock 2005 2018 russian ukrainian",
+            "молодёжный emo pop rock любовь 2010",
+        ))
+        return queries
+
+    @staticmethod
+    def _bounded_score(value, default=0.0):
+        try:
+            return max(0.0, min(100.0, float(value)))
+        except (TypeError, ValueError):
+            return float(default)
+
+    @classmethod
+    def _romantic_evening_genre_score(cls, value):
+        genre = cls._recommendation_genre(value)
+        normalized = cls._normalize_music_text(genre)
+        if any(
+            cls._normalize_music_text(phrase) in normalized
+            for phrase in ROMANTIC_EVENING_FORBIDDEN_GENRE_PHRASES
+        ):
+            return 0.0
+        _text, mentions = cls._genre_mentions(genre)
+        families = {item[2] for item in mentions}
+        if families & {"chanson", "post_punk", "darkwave", "art_rock", "metal"}:
+            return 0.0
+        desired = families & ROMANTIC_EVENING_GENRES
+        if desired:
+            return 100.0
+        if "rock" in families and any(
+            word in normalized
+            for word in ("melod", "guitar", "festival", "youth", "мелод", "гітар", "гитар")
+        ):
+            return 85.0
+        if "rock" in families:
+            return 65.0
+        return 0.0
+
+    @classmethod
+    def _romantic_evening_suitability(cls, value):
+        artist = str((value or {}).get("artist") or "").strip()
+        title = str((value or {}).get("title") or "").strip()
+        artist_key = cls._normalize_music_text(artist)
+        key = (artist_key, cls._normalize_music_text(title))
+        seeds = {
+            (
+                cls._normalize_music_text(seed["artist"]),
+                cls._normalize_music_text(seed["title"]),
+            ): seed
+            for seed in ROMANTIC_EVENING_SEED_TRACKS
+        }
+        seed_artists = {seed_key[0] for seed_key in seeds}
+        blocked = {
+            cls._normalize_music_text(name)
+            for name in ROMANTIC_EVENING_BLOCKED_ARTISTS
+        }
+        if not all(key) or artist_key in blocked:
+            return {
+                "score": 0.0, "era": 0.0, "artist": 0.0,
+                "genre": 0.0, "mood": 0.0, "popularity": 0.0,
+                "blocked": artist_key in blocked,
+            }
+
+        seed = seeds.get(key)
+
+        def year_score(raw, default=60.0):
+            try:
+                year = int(float(raw))
+            except (TypeError, ValueError):
+                return default
+            if 2005 <= year <= 2018:
+                return 100.0
+            distance = 2005 - year if year < 2005 else year - 2018
+            return max(0.0, 100.0 - distance * 6.0)
+
+        release_year = (
+            (value or {}).get("year")
+            or (value or {}).get("releaseYear")
+            or (seed or {}).get("year")
+        )
+        era_score = year_score(release_year)
+        artist_score = cls._bounded_score(
+            (value or {}).get("artistGenerationScore"),
+            year_score((value or {}).get("artistBreakthroughYear")),
+        )
+        if artist_key in seed_artists:
+            artist_score = 100.0
+
+        genre_score = cls._romantic_evening_genre_score(value)
+        if seed:
+            genre_score = max(genre_score, 100.0)
+
+        moods = (value or {}).get("moods") or (value or {}).get("mood") or []
+        if isinstance(moods, str):
+            moods = [moods]
+        mood_text = cls._normalize_music_text(
+            " ".join(str(item) for item in moods)
+            + " " + str((value or {}).get("reason") or "")
+        )
+        mood_hits = sum(
+            cls._normalize_music_text(word) in mood_text
+            for word in ROMANTIC_EVENING_MOOD_WORDS
+        )
+        inferred_mood = min(100.0, 55.0 + mood_hits * 12.0) if mood_hits else 55.0
+        mood_score = cls._bounded_score(
+            (value or {}).get("moodScore"), inferred_mood,
+        )
+        popularity_score = cls._bounded_score(
+            (value or {}).get("popularityScore"), 65.0,
+        )
+        if seed:
+            era_score = max(era_score, 100.0)
+            artist_score = 100.0
+            mood_score = max(mood_score, 100.0)
+            popularity_score = max(popularity_score, 90.0)
+
+        score = (
+            era_score * 0.20
+            + artist_score * 0.15
+            + genre_score * 0.25
+            + mood_score * 0.25
+            + popularity_score * 0.15
+        )
+        return {
+            "score": round(score, 2),
+            "era": round(era_score, 2),
+            "artist": round(artist_score, 2),
+            "genre": round(genre_score, 2),
+            "mood": round(mood_score, 2),
+            "popularity": round(popularity_score, 2),
+            "blocked": False,
+        }
+
     @staticmethod
     def _recommendation_genre(value):
-        genres = value.get("genres") if isinstance(value, dict) else None
+        genres = (
+            value.get("genre") or value.get("genres")
+            if isinstance(value, dict) else None
+        )
         if isinstance(genres, list):
             genres = ", ".join(str(item).strip() for item in genres if str(item).strip())
-        return str(
-            (value or {}).get("genre") or genres or (value or {}).get("reason") or ""
-        ).strip()
+        return str(genres or (value or {}).get("reason") or "").strip()
 
     @staticmethod
     def _genre_mentions(value):
@@ -1100,14 +1322,47 @@ class RadioAPI:
         text, mentions = cls._genre_mentions(station_prompt)
         positive = set()
         negative = set()
-        negation = re.compile(
-            r"(?:без|крім|окрім|не|exclude|avoid|without|except|no|not)"
-            r"(?:\s+[\w'’&+-]+){0,3}\s*$",
+        negative_marker = re.compile(
+            r"(?<!\w)(?:без|крім|окрім|не|уникай|уникайте|exclude|avoid|"
+            r"without|except|no|not|rather\s+than|instead\s+of|over)(?!\w)",
+            flags=re.IGNORECASE | re.UNICODE,
+        )
+        positive_marker = re.compile(
+            r"(?<!\w)(?:prioriti[sz]e|prefer|include|focus(?:ed)?|aim|want|"
+            r"choose|keep|пріоритет\w*|переваг\w*|віддавай\w*|віддавайте\w*|"
+            r"включ\w*|додавай\w*|додавайте\w*|обирай\w*|обирайте\w*)(?!\w)",
             flags=re.IGNORECASE | re.UNICODE,
         )
         for start, _end, genre in mentions:
-            prefix = text[max(0, start - 40):start]
-            (negative if negation.search(prefix) else positive).add(genre)
+            # Negation often introduces a comma-separated list ("Avoid old
+            # rock, chanson, post-punk...").  Looking only a few words back
+            # loses that scope and turns later exclusions into requirements.
+            # Keep polarity through the current sentence/paragraph, while a
+            # later explicit positive marker can start a positive list again.
+            clause_start = max(
+                (text.rfind(separator, 0, start) for separator in ".!?;\n"),
+                default=-1,
+            ) + 1
+            prefix = text[clause_start:start]
+            last_negative = max(
+                (match.start() for match in negative_marker.finditer(prefix)),
+                default=-1,
+            )
+            last_positive = max(
+                (match.start() for match in positive_marker.finditer(prefix)),
+                default=-1,
+            )
+            (negative if last_negative > last_positive else positive).add(genre)
+        # A broad word can legitimately occur in both contexts, for example
+        # "modern alternative rock; avoid classic Russian rock".  Our compact
+        # taxonomy cannot encode the era/adjective qualifier, so retaining the
+        # positive family is safer than forbidding all of its subgenres.
+        positive_parents = {
+            parent
+            for genre in positive
+            for parent in GENRE_PARENTS.get(genre, set())
+        }
+        negative.difference_update(positive | positive_parents)
         # A specific subgenre in the prompt is a real constraint. Generic
         # parent tags are used only when the user did not name a narrower one.
         specific = positive - GENERIC_GENRES
@@ -2484,6 +2739,7 @@ class RadioAPI:
     def _queue_search_plan(self, settings, excluded_tracks=None, providers=None):
         station_prompt = settings.get("station_prompt", DEFAULTS["station_prompt"]).strip()
         station_prompt_search = self._translated_station_prompt(station_prompt, settings)
+        romantic_evening = self._is_romantic_evening_profile(station_prompt)
         providers = list(providers) if providers is not None else self._ai_providers_for_tracks(settings)
         search_max_tokens = _normalized_ai_max_tokens(settings)
         system_prompt = """Ти музичний директор радіо. Поверни тільки JSON:
@@ -2514,6 +2770,26 @@ darkwave чи post-punk: українська та російськомовна 
 Не додавай поле reason: воно витрачає токени й не допомагає пошуку. Не повторюй
 композиції з excludeTracks.
 Не додавай пояснень поза JSON."""
+        if romantic_evening:
+            seed_lines = "\n".join(
+                f'- {seed["artist"]} — {seed["title"]}'
+                for seed in ROMANTIC_EVENING_SEED_TRACKS
+            )
+            system_prompt += f"""
+
+Активний профіль: Romantic Evening.
+Еталонний музичний простір:
+{seed_lines}
+
+Сама тема кохання НЕ робить пісню придатною. Вона також має бути стилістично
+і поколіннєво близькою до еталонів. Для кожного треку додай компактні поля:
+year (рік релізу), artistBreakthroughYear, mood (1-3 слова), popularityScore
+(0-100) і retrievalClass (seed, discovery або experimental). Не вигадуй рік,
+якщо не впевнений — поверни null. Розподіл основного списку: приблизно 70%
+сусідів конкретних seed-треків, 20% genre+mood+era discovery і 10% обережних
+експериментів. Заборонено більше одного треку одного виконавця в основному
+списку. Не пропонуй Земфіру, ДДТ, Сплін, Бі-2/Би-2, Кино, Аквариум, Чайф,
+Машину времени, Алису, Крематорий або Наутилус Помпилиус."""
         excluded_tracks = excluded_tracks or []
         excluded_keys = {
             (
@@ -2524,7 +2800,7 @@ darkwave чи post-punk: українська та російськомовна 
             if str(track.get("artist") or "").strip()
             and str(track.get("title") or "").strip()
         }
-        request_text = json.dumps({
+        request_payload = {
             "stationPrompt": station_prompt_search,
             "excludeTracks": [
                 {
@@ -2535,7 +2811,19 @@ darkwave чи post-punk: українська та російськомовна 
                 if str(track.get("artist") or "").strip()
                 and str(track.get("title") or "").strip()
             ],
-        }, ensure_ascii=False)
+        }
+        if romantic_evening:
+            request_payload["selectionProfile"] = {
+                "name": "Romantic Evening",
+                "minimumScore": ROMANTIC_EVENING_MIN_SCORE,
+                "weights": {
+                    "mood": 25, "genre": 25, "era": 20,
+                    "artistGeneration": 15, "popularity": 15,
+                },
+                "seedTracks": list(ROMANTIC_EVENING_SEED_TRACKS),
+                "retrievalMix": {"seed": 70, "discovery": 20, "experimental": 10},
+            }
+        request_text = json.dumps(request_payload, ensure_ascii=False)
         LOGGER.info(
             "Requesting AI music plan for station style: %s (search text: %s)",
             station_prompt, station_prompt_search,
@@ -2545,12 +2833,17 @@ darkwave чи post-punk: українська та російськомовна 
             self._normalize_music_text(artist)
             for artist in LEGACY_REGIONAL_ROCK_ARTISTS
         }
-        def blocked_legacy_artist(artist):
+        romantic_blocked_artist_keys = {
+            self._normalize_music_text(artist)
+            for artist in ROMANTIC_EVENING_BLOCKED_ARTISTS
+        }
+        def blocked_artist_reason(artist):
             artist_key = self._normalize_music_text(artist)
-            return (
-                avoid_legacy_regional_rock
-                and artist_key in legacy_artist_keys
-            )
+            if avoid_legacy_regional_rock and artist_key in legacy_artist_keys:
+                return "legacy-regional-rock"
+            if romantic_evening and artist_key in romantic_blocked_artist_keys:
+                return "romantic-evening-blacklist"
+            return ""
 
         def normalized_plan(response):
             payload = _music_plan_object(response.get("candidate", ""))
@@ -2570,6 +2863,48 @@ darkwave чи post-punk: українська та російськомовна 
                     reject_covers
                     and any(word.startswith("кавер") or word == "cover" for word in words)
                 )
+
+            seed_keys = {
+                (
+                    self._normalize_music_text(seed["artist"]),
+                    self._normalize_music_text(seed["title"]),
+                )
+                for seed in ROMANTIC_EVENING_SEED_TRACKS
+            }
+
+            def scored_recommendation(value, artist, title, reason, genre):
+                recommendation = {
+                    "artist": artist,
+                    "title": title,
+                    "reason": reason,
+                    "genre": genre,
+                }
+                if not romantic_evening:
+                    return recommendation, None
+                scoring_value = {**value, "artist": artist, "title": title}
+                suitability = self._romantic_evening_suitability(scoring_value)
+                retrieval_class = str(
+                    value.get("retrievalClass") or value.get("retrieval_class") or ""
+                ).strip().casefold()
+                if retrieval_class not in {"seed", "discovery", "experimental"}:
+                    candidate_key = (
+                        self._normalize_music_text(artist),
+                        self._normalize_music_text(title),
+                    )
+                    retrieval_class = "seed" if candidate_key in seed_keys else "discovery"
+                recommendation.update({
+                    "year": value.get("year") or value.get("releaseYear"),
+                    "artist_breakthrough_year": value.get("artistBreakthroughYear"),
+                    "mood": value.get("mood") or value.get("moods") or [],
+                    "popularity_score": suitability["popularity"],
+                    "suitability_score": suitability["score"],
+                    "suitability_components": {
+                        key: suitability[key]
+                        for key in ("era", "artist", "genre", "mood", "popularity")
+                    },
+                    "retrieval_class": retrieval_class,
+                })
+                return recommendation, suitability
 
             recommendations = []
             similar_recommendations = []
@@ -2607,7 +2942,23 @@ darkwave чи post-punk: українська та російськомовна 
                         "reason": "style-conflict",
                     })
                     continue
-                genre_issue = self._recommendation_style_issue(station_prompt, genre)
+                block_reason = blocked_artist_reason(artist)
+                if block_reason:
+                    skipped.append({
+                        "artist": artist,
+                        "title": title,
+                        "reason": block_reason,
+                    })
+                    continue
+                recommendation, suitability = scored_recommendation(
+                    value, artist, title, reason, genre,
+                )
+                genre_issue = (
+                    "genre-conflict"
+                    if romantic_evening and suitability["genre"] <= 0
+                    else self._recommendation_style_issue(station_prompt, genre)
+                    if not romantic_evening else ""
+                )
                 if genre_issue:
                     skipped.append({
                         "artist": artist,
@@ -2616,11 +2967,15 @@ darkwave чи post-punk: українська та російськомовна 
                         "genre": genre,
                     })
                     continue
-                if blocked_legacy_artist(artist):
+                if (
+                    romantic_evening
+                    and suitability["score"] < ROMANTIC_EVENING_MIN_SCORE
+                ):
                     skipped.append({
                         "artist": artist,
                         "title": title,
-                        "reason": "legacy-regional-rock",
+                        "reason": "below-romantic-evening-threshold",
+                        "score": suitability["score"],
                     })
                     continue
                 if key[0] == previous_artist_key:
@@ -2632,12 +2987,7 @@ darkwave чи post-punk: українська та російськомовна 
                     continue
                 seen.add(key)
                 seen_titles.add(key[1])
-                recommendations.append({
-                    "artist": artist,
-                    "title": title,
-                    "reason": reason,
-                    "genre": genre,
-                })
+                recommendations.append(recommendation)
                 previous_artist_key = key[0]
             similar_seen = set(seen)
             similar_seen_titles = set(seen_titles)
@@ -2672,7 +3022,23 @@ darkwave чи post-punk: українська та російськомовна 
                         "reason": "style-conflict",
                     })
                     continue
-                genre_issue = self._recommendation_style_issue(station_prompt, genre)
+                block_reason = blocked_artist_reason(artist)
+                if block_reason:
+                    skipped.append({
+                        "artist": artist,
+                        "title": title,
+                        "reason": block_reason,
+                    })
+                    continue
+                recommendation, suitability = scored_recommendation(
+                    value, artist, title, reason, genre,
+                )
+                genre_issue = (
+                    "genre-conflict"
+                    if romantic_evening and suitability["genre"] <= 0
+                    else self._recommendation_style_issue(station_prompt, genre)
+                    if not romantic_evening else ""
+                )
                 if genre_issue:
                     skipped.append({
                         "artist": artist,
@@ -2681,11 +3047,15 @@ darkwave чи post-punk: українська та російськомовна 
                         "genre": genre,
                     })
                     continue
-                if blocked_legacy_artist(artist):
+                if (
+                    romantic_evening
+                    and suitability["score"] < ROMANTIC_EVENING_MIN_SCORE
+                ):
                     skipped.append({
                         "artist": artist,
                         "title": title,
-                        "reason": "legacy-regional-rock",
+                        "reason": "below-romantic-evening-threshold",
+                        "score": suitability["score"],
                     })
                     continue
                 if key[0] == previous_similar_artist_key:
@@ -2697,12 +3067,7 @@ darkwave чи post-punk: українська та російськомовна 
                     continue
                 similar_seen.add(key)
                 similar_seen_titles.add(key[1])
-                similar_recommendations.append({
-                    "artist": artist,
-                    "title": title,
-                    "reason": reason,
-                    "genre": genre,
-                })
+                similar_recommendations.append(recommendation)
                 previous_similar_artist_key = key[0]
             if not recommendations:
                 raise ValueError("AI не повернув нових виконавців і назв")
@@ -2734,6 +3099,13 @@ darkwave чи post-punk: українська та російськомовна 
             score += min(similar_count, 10) * 2
             score += min(len(plan.get("target_mood", [])), 5) * 1.2
             score += min(len(plan.get("avoid", [])), 12) * 0.4
+            if romantic_evening:
+                suitability_scores = [
+                    float(item.get("suitability_score") or 0)
+                    for item in plan.get("tracks", [])
+                ]
+                if suitability_scores:
+                    score += sum(suitability_scores) / len(suitability_scores)
             score -= reason_penalty * 0.75
             score -= len(plan.get("skipped", [])) * 3
             return round(max(0.0, score), 2)
@@ -2751,12 +3123,23 @@ darkwave чи post-punk: українська та російськомовна 
             f"Prioritize canonical hits that strictly match: {station_prompt_search}.",
             f"Use only well-known, official releases within this exact scope: {station_prompt_search}.",
         )
+        if romantic_evening:
+            selection_lanes = (
+                "Use the supplied retrieval queries. Return roughly 7 seed-neighbor, "
+                "2 genre+mood+era discovery and 1 experimental candidate.",
+                "Expand from three rotating seed tracks while keeping one track per artist.",
+                "Find close 2005-2018 Ukrainian/Russian-language emo and pop-rock neighbors.",
+                "Prioritize youthful romantic city-evening songs near the supplied seeds.",
+                "Use recognizable official releases; love lyrics alone are not sufficient.",
+            )
 
         def provider_request_text(spec, index):
             payload = json.loads(request_text)
             payload["selectionLane"] = index + 1
             payload["selectionFocus"] = selection_lanes[index % len(selection_lanes)]
             payload["providerLabel"] = str(spec.get("name") or "AI")
+            if romantic_evening:
+                payload["retrievalQueries"] = self._romantic_evening_queries(index)
             return json.dumps(payload, ensure_ascii=False)
 
         if providers:
@@ -2816,6 +3199,11 @@ darkwave чи post-punk: українська та російськомовна 
 відомих, офіційно виданих треків під заданий стиль. Genre обов'язковий і має
 описувати реальний жанр треку. Без reason, Markdown і тексту
 поза JSON. Не повторюй excludeTracks."""
+                    if romantic_evening:
+                        repair_prompt += """
+Для Romantic Evening у кожному елементі також поверни year,
+artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише один трек
+на виконавця; не повертай артистів із blacklist у selectionProfile."""
                     repaired = self._provider_chat_completion(
                         spec, repair_prompt, request_text, 0.1, 0.7, search_max_tokens,
                     )
@@ -2873,6 +3261,105 @@ darkwave чи post-punk: українська та російськомовна 
                     -provider_priority.get(plan.get("provider", ""), len(providers)),
                 ),
             )
+            if romantic_evening:
+                ranked_items = []
+                for plan in candidates:
+                    for item in plan.get("tracks", []) + plan.get("similar_tracks", []):
+                        ranked_items.append({
+                            **item,
+                            "source_provider": plan.get("provider", ""),
+                        })
+                ranked_items.sort(
+                    key=lambda item: (
+                        -float(item.get("suitability_score") or 0),
+                        provider_priority.get(item.get("source_provider", ""), len(providers)),
+                    )
+                )
+                unique_items = []
+                seen_keys = set()
+                seen_titles = set()
+                seen_artists = set()
+                for item in ranked_items:
+                    artist_key = self._normalize_music_text(item.get("artist"))
+                    title_key = self._normalize_music_text(item.get("title"))
+                    key = (artist_key, title_key)
+                    if (
+                        not all(key) or key in seen_keys or title_key in seen_titles
+                        or artist_key in seen_artists
+                    ):
+                        continue
+                    seen_keys.add(key)
+                    seen_titles.add(title_key)
+                    seen_artists.add(artist_key)
+                    unique_items.append(item)
+
+                buckets = {
+                    lane: [
+                        item for item in unique_items
+                        if item.get("retrieval_class") == lane
+                    ]
+                    for lane in ("seed", "discovery", "experimental")
+                }
+                primary = []
+                for lane, limit in (("seed", 7), ("discovery", 2), ("experimental", 1)):
+                    primary.extend(buckets[lane][:limit])
+                primary_keys = {
+                    (
+                        self._normalize_music_text(item.get("artist")),
+                        self._normalize_music_text(item.get("title")),
+                    )
+                    for item in primary
+                }
+                primary.extend(
+                    item for item in unique_items
+                    if (
+                        self._normalize_music_text(item.get("artist")),
+                        self._normalize_music_text(item.get("title")),
+                    ) not in primary_keys
+                )
+                primary = primary[:10]
+                primary_keys = {
+                    (
+                        self._normalize_music_text(item.get("artist")),
+                        self._normalize_music_text(item.get("title")),
+                    )
+                    for item in primary
+                }
+                remaining = [
+                    item for item in unique_items
+                    if (
+                        self._normalize_music_text(item.get("artist")),
+                        self._normalize_music_text(item.get("title")),
+                    ) not in primary_keys
+                ]
+                if not primary:
+                    raise RuntimeError(
+                        "Romantic Evening: жоден кандидат не набрав мінімум 72 бали"
+                    )
+                chosen = {
+                    **chosen,
+                    "tracks": primary,
+                    "similar_tracks": remaining[:10],
+                    "backup_tracks": remaining[10:60],
+                    "target_mood": [
+                        "romantic", "nostalgic", "warm", "bittersweet", "evening",
+                    ],
+                    "avoid": list(ROMANTIC_EVENING_FORBIDDEN_GENRE_PHRASES),
+                    "quality_score": round(
+                        sum(float(item.get("suitability_score") or 0) for item in primary)
+                        / len(primary),
+                        2,
+                    ),
+                    "candidate_count": len(ranked_items),
+                    "qualified_candidate_count": len(unique_items),
+                    "provider_diagnostics": diagnostics,
+                }
+                LOGGER.info(
+                    "Romantic Evening pool: candidates=%s qualified=%s selected=%s score=%.2f",
+                    len(ranked_items), len(unique_items), len(primary),
+                    float(chosen["quality_score"]),
+                )
+                return chosen
             chosen_keys = {
                 (
                     self._normalize_music_text(item.get("artist")),
@@ -3169,8 +3656,12 @@ darkwave чи post-punk: українська та російськомовна 
 
     def _refill_discovery_plan_cache(self, settings, excluded_tracks):
         plan = self._queue_search_plan(settings, excluded_tracks)
+        romantic_evening = self._is_romantic_evening_profile(
+            settings.get("station_prompt", DEFAULTS["station_prompt"])
+        )
         pool = []
         seen = set()
+        seen_artists = set()
         previous_artist = ""
         for item in (
             list(plan.get("tracks") or [])
@@ -3180,9 +3671,13 @@ darkwave чи post-punk: українська та російськомовна 
             artist_key = self._normalize_music_text(item.get("artist"))
             title_key = self._normalize_music_text(item.get("title"))
             key = (artist_key, title_key)
-            if not all(key) or key in seen or artist_key == previous_artist:
+            if (
+                not all(key) or key in seen or artist_key == previous_artist
+                or (romantic_evening and artist_key in seen_artists)
+            ):
                 continue
             seen.add(key)
+            seen_artists.add(artist_key)
             pool.append({
                 **item,
                 "source_provider": (
@@ -3245,9 +3740,25 @@ darkwave чи post-punk: українська та російськомовна 
         if licensed not in {"1", "true", "yes", "on"}:
             raise RuntimeError("Підтвердьте права на джерела перед автозавантаженням")
 
-        history = self.db.recent_radio_history(
-            int(float(settings.get("track_cooldown_tracks", 200)))
+        romantic_evening = self._is_romantic_evening_profile(
+            settings.get("station_prompt", DEFAULTS["station_prompt"])
         )
+        history_limit = int(float(settings.get("track_cooldown_tracks", 200)))
+        history = self.db.recent_radio_history(history_limit)
+        if romantic_evening:
+            seven_days_ago = (
+                datetime.now(timezone.utc) - timedelta(days=7)
+            ).isoformat()
+            weekly_history = self.db.radio_history_since(seven_days_ago)
+            history_by_id = {
+                int(item.get("id") or 0): item
+                for item in [*history, *weekly_history]
+            }
+            history = sorted(
+                history_by_id.values(),
+                key=lambda item: int(item.get("id") or 0),
+                reverse=True,
+            )
         excluded_ids = {int(value) for value in excluded_track_ids}
         queue_tracks = [
             track for track in self.db.tracks() if track["id"] in excluded_ids
@@ -3283,7 +3794,15 @@ darkwave чи post-punk: українська та російськомовна 
         )
         recent_artists = {
             self._normalize_music_text(item.get("artist"))
-            for item in history[: int(float(settings.get("artist_cooldown_tracks", 15)))]
+            for item in history[: max(
+                8 if romantic_evening else 1,
+                int(float(settings.get("artist_cooldown_tracks", 15))),
+            )]
+        }
+        queued_artists = {
+            self._normalize_music_text(item.get("artist"))
+            for item in queue_tracks
+            if str(item.get("artist") or "").strip()
         }
         base_blocked_words = {
             "reaction", "tutorial", "review", "interview", "live concert",
@@ -3318,7 +3837,11 @@ darkwave чи post-punk: українська та російськомовна 
                     break
             search_plan = cached_context
             recommendation_artist = self._normalize_music_text(recommendation["artist"])
-            if recommendation_artist == last_queue_artist or recommendation_artist in recent_artists:
+            if (
+                recommendation_artist == last_queue_artist
+                or recommendation_artist in recent_artists
+                or (romantic_evening and recommendation_artist in queued_artists)
+            ):
                 continue
             blocked_words = {
                 *base_blocked_words,

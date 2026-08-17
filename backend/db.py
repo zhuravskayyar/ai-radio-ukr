@@ -1299,6 +1299,17 @@ class Database:
                 )
             ]
 
+    def radio_history_since(self, played_since, limit=5000):
+        """Return recently aired tracks for time-based anti-repeat rules."""
+        with closing(self.connect()) as db, db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM radio_history WHERE played_at>=? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (str(played_since), int(limit)),
+                )
+            ]
+
     def add_history(self, values):
         with closing(self.connect()) as db, db:
             db.execute(

@@ -1,0 +1,64 @@
+﻿VECTOR RADIO — ПЕРЕВІРКА ВСІХ API НА 10 ТРЕКІВ
+Дата: 2026-08-10T17:02:03+02:00
+Вхідний TXT: C:\Users\yarik\Desktop\api.txt
+Стиль: шансон
+Протестовано ключів: 4
+Успішно повернули рівно 10 треків: 2/4
+Не протестовано безпечним способом: 0
+Секретні ключі у звіт не записуються; fingerprint — SHA-256[:10].
+
+========================================================================
+OpenRouter 1 | OpenRouter | key=a282dff5e2
+Модель: openrouter/free
+Статус: ПОМИЛКА
+HTTP: 200
+Час: 1.89 с
+Треків: 0/10
+Помилка: Некоректний JSON: Expecting ',' delimiter: line 1 column 558 (char 557)
+Сира відповідь:
+{"tracks":[{"artist":"Charles Aznavour","title":"La Bohème"},{"artist":"Édith Piaf","title":"Non, je ne regrette rien"},{"artist":"Serge Gainsbourg","title":"La vie en rose"},{"artist":"Claude François","title":"Comme d'habitude"},{"artist":"Johnny Hallyday","title":"Laissez-moi danser"},{"artist":"Dalida","title":"Bambino"},{"artist":"Michel Sardou","title":"La maladie d'amour"},{"artist":"Joe Dassin","title":"Les goûters de minuit"},{"artist":"Véronic DiCaire","title":"Les enfants de mes enfants"},{"artist":"Patrick Sébastien","title":"Miss Maggie"}]
+
+========================================================================
+OpenRouter 2 | OpenRouter | key=c195123a37
+Модель: openrouter/free
+Статус: ПРАЦЮЄ
+HTTP: 200
+Час: 30.51 с
+Треків: 10/10
+01. Stas Mikhaylov — Владимирский централ
+02. Mikhail Krug — Домой
+03. Valeriy Meladze — Я не люблю тебя
+04. Sergey Lazarev — Сверху вниз
+05. Nikolay Baskov — Белый снег
+06. Aleksandr Marshal — Дальнобойщики
+07. Yevgeny Osin — Там нету тебя
+08. Mikhail Ozerov — Красный конь
+09. Sergey Zhukov — Мама
+10. Dima Bilan — Я тебя люблю
+
+========================================================================
+OpenRouter 3 | OpenRouter | key=22846b79cd
+Модель: openrouter/free
+Статус: ПРАЦЮЄ
+HTTP: 200
+Час: 23.52 с
+Треків: 10/10
+01. Jacques Brel — La Valse à mille temps
+02. Charles Aznavour — Emmenez-moi
+03. Édith Piaf — Non, je ne regrette rien
+04. Georges Brassens — Les Copains d'abord
+05. Françoise Hardy — Tous les garçons et les filles
+06. Claude François — Comme d'habitude
+07. Jacques Dutronc — Et moi, et moi, et moi
+08. Michel Sardou — La Maladie d'amour
+09. Jean-Jacques Goldman — Laisse pas traîner ton histoire
+10. Francis Cabrel — Je l'aime à mourir
+
+========================================================================
+OpenRouter 4 | OpenRouter | key=f1375edc47
+Модель: qwen/qwen3.6-plus:free
+Статус: ПОМИЛКА
+HTTP: 404
+Час: 0.50 с
+Треків: 0/10
+Помилка: The free model has been deprecated. Transition to qwen/qwen3.6-plus for continued paid access.

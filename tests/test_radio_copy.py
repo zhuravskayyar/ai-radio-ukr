@@ -58,9 +58,9 @@ class SpeechNormalizerTests(unittest.TestCase):
             "SZA": "Ес-Зі-Ей",
             "Dua Lipa": "Дуа Ліпа",
             "Linkin Park": "Лінкін Парк",
-            "Twenty One Pilots": "Твенті Уан Пайлотс",
+            "Twenty One Pilots": "Твенті Ван Пайлотс",
             "OneRepublic": "Ван Репаблік",
-            "Imagine Dragons": "Імаджин Драгонс",
+            "Imagine Dragons": "Імеджин Дреґонс",
             "AC/DC": "Ей-Сі Ді-Сі",
             "U2": "Ю Ту",
             "A$AP Rocky": "Ей-Сі-Ей-Пі Роккі",
@@ -77,6 +77,14 @@ class SpeechNormalizerTests(unittest.TestCase):
         self.assertEqual(
             normalize_for_speech("A$AP Rocky & U2?"),
             "Ей-Сі-Ей-Пі Роккі і Ю Ту",
+        )
+        self.assertEqual(
+            normalize_for_speech("U2 — One"),
+            "Ю Ту, Ван",
+        )
+        self.assertEqual(
+            normalize_for_speech("The Ocean — Ocean Eyes"),
+            "Зе Оушн, Оушн Айз",
         )
 
     def test_golden_titles_override_local_letter_by_letter_transliteration(self):
@@ -111,7 +119,7 @@ class SpeechNormalizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "неукраїнські"):
             validate_phonetic_spelling("Muse", "mjuːz", "artist")
         with self.assertRaisesRegex(ValueError, "неукраїнські"):
-            validate_phonetic_spelling("Кино", "Кіно ё", "artist")
+            validate_phonetic_spelling("Невідомий артист", "Кіно ё", "artist")
 
     def test_common_government_errors_are_corrected(self):
         self.assertEqual(

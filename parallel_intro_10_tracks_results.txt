@@ -1,0 +1,62 @@
+LUMEN Radio — паралельний acceptance-тест підводок
+Дата: 2026-08-14T21:30:52+02:00
+Проєкт: C:\Users\yarik\Desktop\localRadio
+Режим: fallback дозволено
+Провайдери: локальний редакційний fallback
+Паралельні workers: 10
+Фактичний пік одночасних задач: 10
+Максимум спроб на трек: 1
+AI-варіантів на одну спробу: 1
+Загальний час: 0.66 с
+
+РЕЗУЛЬТАТ: PASS — 10/10
+
+01. PASS | Three Days Grace — Human Race
+Тип: listener_context | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=9
+Текст: У центрі цього переходу — Three Days Grace — «Human Race».
+
+02. PASS | Sean Paul — She Doesn't Mind
+Тип: comparison | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=10
+Текст: Коротко й без зайвих пояснень: Sean Paul — «She Doesn't Mind».
+
+03. PASS | Breaking Benjamin — You
+Тип: listener_context | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=7
+Текст: Слова відступають. У центрі — Breaking Benjamin — «You».
+
+04. PASS | Макс Корж — Зелёный чемодан
+Тип: comparison | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=9
+Текст: Один точний анонс перед стартом: Макс Корж — «Зелёный чемодан».
+
+05. PASS | LINKIN PARK — CASTLE OF GLASS
+Тип: listener_context | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=10
+Текст: Пауза закінчується там, де починається LINKIN PARK — «CASTLE OF GLASS».
+
+06. PASS | Король и Шут — Кукла колдуна
+Тип: comparison | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=8
+Текст: Мікрофон замовкає. Далі — Король и Шут — «Кукла колдуна».
+
+07. PASS | Владимир Клявин — Весна
+Тип: listener_context | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=8
+Текст: Кілька секунд тиші — і далі Владимир Клявин — «Весна».
+
+08. PASS | Lil Peep & XXXTENTACION — Falling Down (Bonus Track)
+Тип: comparison | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=14
+Текст: Без передмови, але з точним ім'ям: Lil Peep & XXXTENTACION — «Falling Down (Bonus Track)».
+
+09. PASS | Disturbed — Decadence
+Тип: listener_context | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=7
+Текст: Новий рух цієї музичної лінії — Disturbed — «Decadence».
+
+10. PASS | Papa Roach — ...To Be Loved
+Тип: comparison | стиль: straight_radio | спроб: 1
+Генератор: template | fallback: так | quality=local-gate | слів=8
+Текст: Наступний відрізок ефіру: Papa Roach — «...To Be Loved».

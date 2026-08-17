@@ -1,6 +1,8 @@
 pywebview>=5.3
 edge-tts>=7.2
 mutagen>=1.47
+cmudict>=1.1,<2
+pronouncing>=0.2,<1
 yt-dlp[default,deno]>=2026.7.4
 tzdata>=2025.2
 # Local Ukrainian StyleTTS2. CPU is supported; CUDA is used automatically when available.
