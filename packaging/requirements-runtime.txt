@@ -9,3 +9,4 @@ yt-dlp-ejs==0.8.0
 tzdata>=2025.2,<2027
 numpy>=1.26,<2
 pydub>=0.25,<0.26
+playwright>=1.52,<2

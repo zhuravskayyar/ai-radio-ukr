@@ -51,6 +51,8 @@ class UpdateManagerTests(unittest.TestCase):
     def test_four_component_release_continues_legacy_patch_sequence(self):
         self.assertGreater(_version_tuple("1.0.0.6"), _version_tuple("1.0.5"))
         self.assertEqual(_version_tuple("1.0.0.6"), _version_tuple("1.0.6"))
+        self.assertGreater(_version_tuple("1.0.0.7"), _version_tuple("1.0.0.6"))
+        self.assertEqual(_version_tuple("1.0.0.7"), _version_tuple("1.0.7"))
 
     def test_new_patch_is_downloaded_and_verified(self):
         with tempfile.TemporaryDirectory() as directory:
