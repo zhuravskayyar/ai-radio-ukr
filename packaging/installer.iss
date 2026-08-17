@@ -1,5 +1,5 @@
 #define AppName "Vector Radio"
-#define AppVersion "1.0.0.7"
+#define AppVersion "1.0.0.8"
 #define AppPublisher "Vector Radio"
 #define PythonArchive "python-3.11.9-embed-amd64.zip"
 #define WebViewInstaller "MicrosoftEdgeWebview2Setup.exe"
@@ -53,6 +53,7 @@ Source: "python311._pth"; DestDir: "{app}\runtime"; Flags: ignoreversion
 Source: "get-pip.py"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: NeedPip
 Source: "..\main.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Qwen_python_20260804_4sskbslqs.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\radio_pronunciation.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\ui\*"; DestDir: "{app}\ui"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\data\music-stories.json"; DestDir: "{app}\data"; Flags: ignoreversion

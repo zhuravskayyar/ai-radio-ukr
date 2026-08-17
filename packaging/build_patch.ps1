@@ -47,7 +47,7 @@ finally {
     Pop-Location
 }
 
-$output = Join-Path $projectRoot "dist\Vector_Radio_Patch_1.0.0.7.exe"
+$output = Join-Path $projectRoot "dist\Vector_Radio_Patch_1.0.0.8.exe"
 $checksumOutput = "$output.sha256"
 Write-Host "Patch created: $output"
 $hash = Get-FileHash -LiteralPath $output -Algorithm SHA256
