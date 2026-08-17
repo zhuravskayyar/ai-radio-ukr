@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import patch
 
-from radio_pronunciation import PronunciationEngine, RadioPronunciation
+import radio_pronunciation as pronunciation_module
+from radio_pronunciation import PronunciationEngine, RadioPronunciation, cmudict_lookup
 
 
 class RadioPronunciationTests(unittest.TestCase):
@@ -81,6 +83,27 @@ class RadioPronunciationTests(unittest.TestCase):
         self.assertNotRegex(result.spoken, r"[A-Za-z]")
         self.assertEqual(result.source, "pattern")
         self.assertEqual(result.confidence, 0.55)
+
+    @unittest.skipIf(
+        pronunciation_module.pronouncing is None or pronunciation_module.cmudict is None,
+        "CMU pronunciation packages are not installed",
+    )
+    def test_pronouncing_miss_does_not_rebuild_direct_cmudict(self):
+        cmudict_lookup.cache_clear()
+        with (
+            patch.object(
+                pronunciation_module.pronouncing,
+                "phones_for_word",
+                return_value=[],
+            ),
+            patch.object(
+                pronunciation_module.cmudict,
+                "dict",
+                side_effect=AssertionError("direct CMUdict must not be rebuilt"),
+            ),
+        ):
+            self.assertIsNone(cmudict_lookup("zzvectorradiomiss"))
+        cmudict_lookup.cache_clear()
 
     def test_music_context_variants_are_explicit(self):
         self.assertEqual(self.pronouncer.convert("live"), "лайв")
