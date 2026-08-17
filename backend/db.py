@@ -417,17 +417,6 @@ class Database:
                     db.execute(f"ALTER TABLE track_facts ADD COLUMN {name} {declaration}")
             for key, value in DEFAULTS.items():
                 db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
-            db.execute(
-                "UPDATE settings SET value='15' WHERE key='host_length' AND value='25'"
-            )
-            db.execute("UPDATE settings SET value='4' WHERE key='host_sentences' AND value='5'")
-            db.execute("UPDATE settings SET value='random' WHERE key='rotation' AND value='chart'")
-            db.execute("UPDATE settings SET value='Play Together' WHERE key='chart_name' AND value='LUMEN TOP 100'")
-            db.execute("UPDATE settings SET value='1' WHERE key='host_every' AND value='3'")
-            db.execute("UPDATE settings SET value='100' WHERE key='talk_probability' AND value='35'")
-            db.execute(
-                "UPDATE settings SET value='1000' WHERE key='ai_max_tokens' AND value='360'"
-            )
             for artist, old_speech, new_speech in (
                 ("The Offspring", "Ді Офспрінг", "Зе Офспрінг"),
                 ("Three Days Grace", "срі дейс ґрасе", "Трі Дейз Ґрейс"),
@@ -701,46 +690,59 @@ class Database:
                 )
                 db.execute("DELETE FROM transitions")
                 db.execute("PRAGMA user_version=20")
-            db.execute(
-                "UPDATE settings SET value=? "
-                "WHERE key='ai_max_tokens' AND value IN ('160','220','320','360')",
-                (DEFAULTS["ai_max_tokens"],),
-            )
-            db.execute(
-                "UPDATE settings SET value='16' WHERE key='host_length' AND value IN ('7','12','15')"
-            )
-            db.execute(
-                "UPDATE settings SET value='85' WHERE key='story_probability' AND value IN ('30','60','70')"
-            )
-            db.execute(
-                "UPDATE settings SET value='2' WHERE key='silence_probability' AND value IN ('7','10')"
-            )
-            db.execute(
-                "UPDATE settings SET value='12' WHERE key='rubric_probability' AND value IN ('6')"
-            )
-            db.execute(
-                "UPDATE settings SET value=? WHERE key='nvidia_model' AND value=?",
-                (DEFAULTS["nvidia_model"], "qwen/qwen3-next-80b-a3b-instruct"),
-            )
-            db.execute(
-                "UPDATE settings SET value=? WHERE key='nvidia_model' AND value=?",
-                (DEFAULTS["nvidia_model"], "qwen/qwen3.5-397b-a17b"),
-            )
-            db.execute(
-                "UPDATE settings SET value=? WHERE key='nvidia_model' AND value=?",
-                (DEFAULTS["nvidia_model"], "nvidia/nemotron-3-nano-30b-a3b"),
-            )
-            db.execute(
-                "UPDATE settings SET value=? WHERE key='secondary_model' AND value=?",
-                (DEFAULTS["secondary_model"], "deepseek/deepseek-v4-flash-latest"),
-            )
-            db.execute(
-                "UPDATE settings SET value=? WHERE key='station_prompt' AND value=?",
-                (
-                    DEFAULTS["station_prompt"],
-                    "Темна нічна електроніка, alternative, darkwave, atmospheric rock; чергуй відомі та маловідомі треки без веселого поп-звучання.",
-                ),
-            )
+            if schema_version < 21:
+                # Older builds ran several compatibility UPDATE statements on
+                # every launch.  That made legitimate user choices such as a
+                # 12-second host link or 70% story probability appear to save
+                # and then silently revert after restart.  Version 21 closes
+                # that migration era: settings are never rewritten here again.
+                # Only newly curated pronunciation fields are refreshed, and
+                # explicit manual spellings remain authoritative.
+                refreshed_pronunciations = False
+                for row in db.execute("SELECT * FROM tracks").fetchall():
+                    if str(row["pronunciation_source"] or "").casefold() == "manual":
+                        continue
+                    curated_artist, curated_title = suggested_pronunciations(
+                        row["artist"], row["title"]
+                    )
+                    updates = {}
+                    if curated_artist:
+                        updates.update({
+                            "artist_speech": curated_artist,
+                            "artist_speech_confidence": 1.0,
+                        })
+                    if curated_title:
+                        updates.update({
+                            "title_speech": curated_title,
+                            "title_speech_confidence": 1.0,
+                        })
+                    if not updates:
+                        continue
+                    artist_confidence = float(
+                        updates.get(
+                            "artist_speech_confidence",
+                            row["artist_speech_confidence"] or 0,
+                        )
+                    )
+                    title_confidence = float(
+                        updates.get(
+                            "title_speech_confidence",
+                            row["title_speech_confidence"] or 0,
+                        )
+                    )
+                    updates["pronunciation_source"] = "curated"
+                    updates["pronunciation_review"] = int(
+                        artist_confidence < 0.9 or title_confidence < 0.9
+                    )
+                    assignments = ",".join(f"{field}=?" for field in updates)
+                    db.execute(
+                        f"UPDATE tracks SET {assignments} WHERE id=?",
+                        (*updates.values(), row["id"]),
+                    )
+                    refreshed_pronunciations = True
+                if refreshed_pronunciations:
+                    db.execute("DELETE FROM transitions")
+                db.execute("PRAGMA user_version=21")
             for row in db.execute("SELECT * FROM tracks"):
                 automatic = _auto_pronunciation_values(row["artist"], row["title"])
                 updates = {}

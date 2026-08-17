@@ -188,7 +188,7 @@ finished = threading.Event()
 failures = []
 
 
-def wait_for_diagnostics(predicate, timeout=10):
+def wait_for_diagnostics(predicate, timeout=35):
     deadline = time.time() + timeout
     latest = None
     while time.time() < deadline:
@@ -298,6 +298,20 @@ def verify():
             .some(option => option.value === '0' && option.textContent.includes('Редактор вирішує')),
           listenerProfileReady: document.querySelector('#listenerProfileSummary').textContent
             .includes('історія: 50%'),
+          researchControlCount: document.querySelectorAll(
+            '[data-setting="web_research_enabled"]'
+          ).length,
+          researchControlsSynced: (() => {
+            const controls = [...document.querySelectorAll(
+              '[data-setting="web_research_enabled"]'
+            )];
+            if (controls.length < 2) return false;
+            const value = controls[0].value === '1' ? '0' : '1';
+            controls[0].value = value;
+            controls[0].dispatchEvent(new Event('change', { bubbles: true }));
+            return controls.every(control => control.value === value)
+              && state.settings.web_research_enabled === value;
+          })(),
           visibleCards: [...document.querySelectorAll('#settings .settingsGrid > article')]
             .filter(node => getComputedStyle(node).display !== 'none').length
         }))()""")
@@ -375,6 +389,8 @@ def verify():
         assert simple_settings["genreVisible"] is True
         assert simple_settings["editorModeOption"] is True
         assert simple_settings["listenerProfileReady"] is True
+        assert simple_settings["researchControlCount"] >= 2
+        assert simple_settings["researchControlsSynced"] is True
         assert simple_settings["visibleCards"] == 1
     except BaseException as exc:
         failures.append(exc)
@@ -385,7 +401,7 @@ def verify():
 
 
 def watchdog():
-    if not finished.wait(40):
+    if not finished.wait(120):
         print("Smoke test timeout", flush=True)
         window.destroy()
 

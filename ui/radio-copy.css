@@ -1,5 +1,16 @@
 .tr {
-  grid-template-columns: 52px minmax(220px, 1fr) 112px 100px 100px 105px 82px;
+  grid-template-columns: 52px minmax(220px, 1fr) 112px 100px 154px 105px 82px;
+}
+
+.storyActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.storyActions > button {
+  min-width: 0;
 }
 
 @media (max-width: 900px) {

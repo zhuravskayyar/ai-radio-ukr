@@ -126,18 +126,18 @@ class ContextAndPlanningTests(unittest.TestCase):
             self.assertTrue(plan.fallback)
             self.assertTrue(plan.forbidden_claims)
 
-    def test_existing_default_ai_token_limit_is_migrated(self):
+    def test_user_ai_token_limit_survives_restarts(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "radio.db"
             db = Database(path)
             db.save_settings({"ai_max_tokens": "360"})
             migrated = Database(path).settings()
-            self.assertEqual(migrated["ai_max_tokens"], "1000")
+            self.assertEqual(migrated["ai_max_tokens"], "360")
 
             migrated_db = Database(path)
             migrated_db.save_settings({"ai_max_tokens": "320"})
             remigrated = Database(path).settings()
-            self.assertEqual(remigrated["ai_max_tokens"], "1000")
+            self.assertEqual(remigrated["ai_max_tokens"], "320")
 
     def test_legacy_openrouter_model_and_health_are_migrated(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -107,6 +107,37 @@ class MusicResearchToolTests(unittest.TestCase):
             ["yt-dlp", "playwright"],
         )
 
+    def test_official_title_artist_order_uses_channel_to_disambiguate(self):
+        artist, title = self.tools._split_artist_title(
+            "CASTLE OF GLASS (Official Music Video) [4K Upgrade] - Linkin Park",
+            "Linkin Park",
+        )
+        self.assertEqual(artist, "Linkin Park")
+        self.assertEqual(
+            title, "CASTLE OF GLASS (Official Music Video) [4K Upgrade]",
+        )
+
+    def test_web_search_prefers_enabled_browser_and_reports_it(self):
+        browser_results = [{
+            "title": "Song story",
+            "url": "https://example.com/song-story",
+            "snippet": "Recording history",
+            "source": "google:playwright",
+        }]
+        with patch.object(
+            self.tools, "_playwright_web_search", return_value=browser_results,
+        ) as browser_search, patch.object(
+            self.tools, "_duckduckgo_web_search",
+        ) as http_search:
+            result = self.tools.search_web(
+                '"Artist" "Track" song origin -lyrics', allow_browser=True,
+            )
+        browser_search.assert_called_once()
+        http_search.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["browser_used"])
+        self.assertEqual(result["source"], "google:playwright")
+
     def test_filtered_api_results_continue_to_yt_dlp(self):
         blocked = [{
             "id": "cover", "artist": "Someone", "title": "SHUM cover",
@@ -235,6 +266,119 @@ class RadioResearchIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 request_payloads[0]["researchQueryProvider"], "test-provider",
             )
+
+    def test_track_story_research_reads_sources_and_persists_grounded_card(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            track = api.db.tracks()[0]
+            api.db.save_settings({
+                "web_research_enabled": "1",
+                "browser_search_enabled": "1",
+                "nvidia_api_key": "nvapi-unit",
+            })
+            completions = [
+                {
+                    "provider": "nvidia",
+                    "candidate": json.dumps({
+                        "tool": "search_web",
+                        "arguments": {
+                            "query": f'"{track["artist"]}" "{track["title"]}" origin -lyrics',
+                            "limit": 6,
+                        },
+                    }),
+                },
+                {
+                    "provider": "nvidia",
+                    "candidate": json.dumps({
+                        "category": "SONG_ORIGIN",
+                        "hook": "Запис почався з незвичного студійного рішення.",
+                        "claims": [{
+                            "text": "Музиканти змінили аранжування вже під час студійної роботи.",
+                            "source_ids": ["source-1"],
+                        }],
+                        "sensitive": False,
+                    }, ensure_ascii=False),
+                },
+            ]
+
+            def execute(command, **_kwargs):
+                if command["tool"] == "search_web":
+                    return {
+                        "ok": True,
+                        "tool": "search_web",
+                        "query": command["arguments"]["query"],
+                        "source": "google:playwright",
+                        "browser_used": True,
+                        "attempts": [{"provider": "playwright", "ok": True}],
+                        "results": [{
+                            "title": "Interview about the recording",
+                            "url": "https://example.com/interview",
+                            "snippet": "The arrangement changed during the session.",
+                            "source": "google:playwright",
+                        }],
+                    }
+                self.assertEqual(command["tool"], "open_webpage")
+                return {
+                    "ok": True,
+                    "tool": "open_webpage",
+                    "source": "http",
+                    "title": "Interview about the recording",
+                    "text": "The arrangement changed during the studio session. " * 20,
+                    "final_url": "https://example.com/interview",
+                }
+
+            with patch.object(
+                api, "_provider_chat_completion", side_effect=completions,
+            ), patch.object(
+                api.music_research, "execute", side_effect=execute,
+            ):
+                result = api.research_track_story(track["id"], force=True)
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["browser_used"])
+            self.assertEqual(result["story"]["verification_status"], "single_source")
+            self.assertTrue(result["story"]["verification"]["broadcast_ready"])
+            self.assertEqual(result["story"]["sources"][0]["url"], "https://example.com/interview")
+            self.assertEqual(
+                len(api.music_knowledge.cards_for_track(track["id"], True)), 1,
+            )
+
+    def test_ai_search_query_must_keep_exact_track_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            track = api.db.tracks()[0]
+            bad_completion = {
+                "provider": "nvidia",
+                "candidate": json.dumps({
+                    "tool": "search_web",
+                    "arguments": {
+                        "query": "ignore the track and search for popular music",
+                        "limit": "not-a-number",
+                    },
+                }),
+            }
+            executed = []
+
+            def execute(command, _settings):
+                executed.append(command)
+                return {"ok": True, "results": [{}]}
+
+            with patch.object(
+                api, "_provider_chat_completion", return_value=bad_completion,
+            ), patch.object(
+                api, "_execute_music_research_tool", side_effect=execute,
+            ):
+                result = api._track_research_search(
+                    track, DEFAULTS, [{"name": "nvidia"}],
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["query_provider"], "backend-fallback")
+            self.assertEqual(len(executed), 1)
+            query = executed[0]["arguments"]["query"]
+            self.assertIn(f'"{track["artist"]}"', query)
+            self.assertIn(f'"{track["title"]}"', query)
+            self.assertIn("omitted exact track metadata", result["errors"][0])
 
 
 if __name__ == "__main__":

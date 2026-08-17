@@ -83,6 +83,58 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _DuckDuckGoResultParser(HTMLParser):
+    """Read the small public HTML result page without executing scripts."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self._title_depth = 0
+        self._snippet_depth = 0
+        self._href = ""
+        self._title_parts = []
+        self._snippet_parts = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        classes = set(str(attributes.get("class") or "").split())
+        if tag.casefold() == "a" and "result__a" in classes:
+            self._title_depth += 1
+            self._href = str(attributes.get("href") or "")
+            self._title_parts = []
+        if "result__snippet" in classes:
+            self._snippet_depth += 1
+            self._snippet_parts = []
+
+    def handle_endtag(self, tag):
+        if tag.casefold() == "a" and self._title_depth:
+            self._title_depth = max(0, self._title_depth - 1)
+            title = " ".join(self._title_parts).strip()
+            if title and self._href:
+                self.results.append({
+                    "title": title,
+                    "url": self._href,
+                    "snippet": "",
+                })
+            self._href = ""
+            self._title_parts = []
+        if self._snippet_depth and tag.casefold() in {"a", "div", "span"}:
+            self._snippet_depth = max(0, self._snippet_depth - 1)
+            snippet = " ".join(self._snippet_parts).strip()
+            if snippet and self.results and not self.results[-1].get("snippet"):
+                self.results[-1]["snippet"] = snippet
+            self._snippet_parts = []
+
+    def handle_data(self, data):
+        value = " ".join(str(data or "").split())
+        if not value:
+            return
+        if self._title_depth:
+            self._title_parts.append(value)
+        if self._snippet_depth:
+            self._snippet_parts.append(value)
+
+
 class MusicResearchTools:
     """Execute a small allowlist of metadata-oriented research commands."""
 
@@ -106,6 +158,11 @@ class MusicResearchTools:
             "name": "open_webpage",
             "description": "Read bounded visible text from a public HTTP(S) page.",
             "arguments": {"url": "string", "max_chars": "integer 200..12000"},
+        },
+        {
+            "name": "search_web",
+            "description": "Search public pages for source-backed facts about a track.",
+            "arguments": {"query": "string", "limit": "integer 1..10"},
         },
     )
 
@@ -224,6 +281,15 @@ class MusicResearchTools:
                     youtube_api_key=youtube_api_key,
                     allow_browser=allow_browser,
                 )
+            if tool == "search_web":
+                unexpected = set(arguments) - {"query", "limit"}
+                if unexpected:
+                    raise ResearchToolError("Unsupported search_web arguments")
+                return self.search_web(
+                    arguments.get("query"),
+                    limit=arguments.get("limit", 6),
+                    allow_browser=allow_browser,
+                )
             unexpected = set(arguments) - {"url", "max_chars"}
             if unexpected:
                 raise ResearchToolError("Unsupported open_webpage arguments")
@@ -255,7 +321,24 @@ class MusicResearchTools:
         title = html.unescape(str(raw_title or "")).strip()
         parts = re.split(r"\s+(?:-|–|—|\|)\s+", title, maxsplit=1)
         if len(parts) == 2 and all(part.strip() for part in parts):
-            return parts[0].strip(), parts[1].strip()
+            left, right = (part.strip() for part in parts)
+            fallback = str(fallback_artist or "").strip()
+            normalize = lambda value: re.sub(
+                r"[^\w]+", " ", str(value or "").casefold(), flags=re.UNICODE,
+            ).strip()
+            fallback_key = normalize(fallback)
+            if fallback_key:
+                left_score = SequenceMatcher(
+                    None, normalize(left), fallback_key,
+                ).ratio()
+                right_score = SequenceMatcher(
+                    None, normalize(right), fallback_key,
+                ).ratio()
+                # Official uploads commonly use "Title - Artist".  The
+                # verified channel name tells us when the pair must be flipped.
+                if right_score >= 0.78 and right_score > left_score:
+                    return right, left
+            return left, right
         return str(fallback_artist or "").strip(), title
 
     @classmethod
@@ -330,6 +413,200 @@ class MusicResearchTools:
         if isinstance(exc, urllib.error.URLError):
             return "network error"
         return f"{type(exc).__name__}: provider unavailable"
+
+    @staticmethod
+    def _unwrapped_search_url(value):
+        raw = html.unescape(str(value or "").strip())
+        parsed = urllib.parse.urlsplit(raw)
+        if "duckduckgo.com" in (parsed.hostname or "").casefold():
+            target = urllib.parse.parse_qs(parsed.query).get("uddg", [""])[0]
+            if target:
+                return urllib.parse.unquote(target)
+        return raw
+
+    def _clean_web_results(self, results, limit):
+        output = []
+        seen = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            title = self._clean_result_title(item.get("title"))
+            url = self._unwrapped_search_url(item.get("url"))
+            snippet = self._clean_result_title(item.get("snippet"))
+            if not title or not url:
+                continue
+            try:
+                parsed = urllib.parse.urlsplit(url)
+                host = (parsed.hostname or "").casefold()
+                if any(
+                    self._host_matches(host, domain)
+                    for domain in ("google.com", "bing.com", "duckduckgo.com")
+                ):
+                    continue
+                url = self.validate_public_url(url)
+            except ResearchToolError:
+                continue
+            key = url.casefold().rstrip("/")
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append({
+                "title": title[:300],
+                "url": url,
+                "snippet": snippet[:700],
+                "source": str(item.get("source") or "web"),
+            })
+            if len(output) >= limit:
+                break
+        return output
+
+    def _duckduckgo_web_search(self, query, limit):
+        url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({
+            "q": query,
+        })
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/124 Safari/537.36"
+                ),
+            },
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            raw = response.read(MAX_HTTP_BYTES)
+            charset = response.headers.get_content_charset() or "utf-8"
+        parser = _DuckDuckGoResultParser()
+        parser.feed(raw.decode(charset, errors="replace"))
+        return [
+            {**item, "source": "duckduckgo:http"}
+            for item in parser.results[:limit * 2]
+        ]
+
+    def _playwright_web_search(self, query, limit):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise ResearchToolError("Playwright is not installed") from exc
+        google_url = "https://www.google.com/search?" + urllib.parse.urlencode({
+            "q": query,
+            "num": min(10, limit * 2),
+            "hl": "en",
+        })
+        results = []
+        with sync_playwright() as playwright:
+            browser = None
+            last_error = None
+            for channel in ("msedge", "chrome", None):
+                try:
+                    kwargs = {"headless": True}
+                    if channel:
+                        kwargs["channel"] = channel
+                    browser = playwright.chromium.launch(**kwargs)
+                    break
+                except Exception as exc:
+                    last_error = exc
+            if browser is None:
+                raise ResearchToolError(
+                    "No Playwright Chromium/Edge/Chrome browser is available"
+                ) from last_error
+            try:
+                page = browser.new_page()
+                page.goto(
+                    google_url,
+                    wait_until="domcontentloaded",
+                    timeout=self.timeout * 1000,
+                )
+                cards = page.locator("a:has(h3)")
+                for index in range(min(cards.count(), limit * 3)):
+                    link = cards.nth(index)
+                    href = str(link.get_attribute("href") or "")
+                    heading = link.locator("h3")
+                    title = self._clean_result_title(
+                        heading.first.inner_text() if heading.count() else ""
+                    )
+                    if title and href.startswith("http"):
+                        results.append({
+                            "title": title,
+                            "url": href,
+                            "snippet": "",
+                            "source": "google:playwright",
+                        })
+                if not results:
+                    # Google can present a consent or bot-check page to an
+                    # unattended browser. Bing is the bounded second engine,
+                    # not a change in research scope.
+                    bing_url = "https://www.bing.com/search?" + urllib.parse.urlencode({
+                        "q": query,
+                        "count": min(10, limit * 2),
+                    })
+                    page.goto(
+                        bing_url,
+                        wait_until="domcontentloaded",
+                        timeout=self.timeout * 1000,
+                    )
+                    bing_cards = page.locator("li.b_algo")
+                    for index in range(min(bing_cards.count(), limit * 3)):
+                        card = bing_cards.nth(index)
+                        links = card.locator("h2 a")
+                        if not links.count():
+                            continue
+                        link = links.first
+                        href = str(link.get_attribute("href") or "")
+                        title = self._clean_result_title(link.inner_text())
+                        snippets = card.locator(".b_caption p")
+                        snippet = self._clean_result_title(
+                            snippets.first.inner_text() if snippets.count() else ""
+                        )
+                        if title and href.startswith("http"):
+                            results.append({
+                                "title": title,
+                                "url": href,
+                                "snippet": snippet,
+                                "source": "bing:playwright",
+                            })
+            finally:
+                browser.close()
+        return results
+
+    def search_web(self, query, *, limit=6, allow_browser=False):
+        query = self._bounded_text(query, "query")
+        limit = max(1, min(10, self._bounded_limit(limit, default=6)))
+        attempts = []
+        results = []
+        if self._truthy(allow_browser):
+            try:
+                results = self._clean_web_results(
+                    self._playwright_web_search(query, limit), limit,
+                )
+                attempts.append({"provider": "playwright", "ok": bool(results)})
+            except Exception as exc:
+                attempts.append({
+                    "provider": "playwright", "ok": False,
+                    "error": self._safe_provider_error(exc),
+                })
+        if not results:
+            try:
+                results = self._clean_web_results(
+                    self._duckduckgo_web_search(query, limit), limit,
+                )
+                attempts.append({"provider": "duckduckgo", "ok": bool(results)})
+            except Exception as exc:
+                attempts.append({
+                    "provider": "duckduckgo", "ok": False,
+                    "error": self._safe_provider_error(exc),
+                })
+        source = str(results[0].get("source") or "") if results else ""
+        return {
+            "ok": bool(results),
+            "tool": "search_web",
+            "query": query,
+            "source": source,
+            "results": results,
+            "attempts": attempts,
+            "browser_used": source.endswith(":playwright"),
+        }
 
     def _json_request(self, url, *, headers=None):
         request = urllib.request.Request(
