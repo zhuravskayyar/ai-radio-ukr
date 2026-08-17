@@ -53,6 +53,8 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(_version_tuple("1.0.0.6"), _version_tuple("1.0.6"))
         self.assertGreater(_version_tuple("1.0.0.7"), _version_tuple("1.0.0.6"))
         self.assertEqual(_version_tuple("1.0.0.7"), _version_tuple("1.0.7"))
+        self.assertGreater(_version_tuple("1.0.0.8"), _version_tuple("1.0.0.7"))
+        self.assertEqual(_version_tuple("1.0.0.8"), _version_tuple("1.0.8"))
 
     def test_new_patch_is_downloaded_and_verified(self):
         with tempfile.TemporaryDirectory() as directory:
