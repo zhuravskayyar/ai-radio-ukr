@@ -126,18 +126,18 @@ class ContextAndPlanningTests(unittest.TestCase):
             self.assertTrue(plan.fallback)
             self.assertTrue(plan.forbidden_claims)
 
-    def test_existing_default_ai_token_limit_is_migrated(self):
+    def test_user_ai_token_limit_survives_restarts(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "radio.db"
             db = Database(path)
             db.save_settings({"ai_max_tokens": "360"})
             migrated = Database(path).settings()
-            self.assertEqual(migrated["ai_max_tokens"], "1000")
+            self.assertEqual(migrated["ai_max_tokens"], "360")
 
             migrated_db = Database(path)
             migrated_db.save_settings({"ai_max_tokens": "320"})
             remigrated = Database(path).settings()
-            self.assertEqual(remigrated["ai_max_tokens"], "1000")
+            self.assertEqual(remigrated["ai_max_tokens"], "320")
 
     def test_legacy_openrouter_model_and_health_are_migrated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -715,6 +715,59 @@ class VoiceAndTransitionTests(unittest.TestCase):
 
 
 class PreparedTransitionTests(unittest.TestCase):
+    def test_verified_web_story_replaces_generic_voiced_transition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            current, next_track = api.db.tracks()[0:2]
+            saved = api.add_music_story(next_track["id"], {
+                "category": "SONG_ORIGIN",
+                "hook": "Запис почався зі студійного експерименту.",
+                "story_data": [
+                    "Музиканти змінили аранжування вже під час студійної роботи."
+                ],
+                "sources": [{
+                    "id": "source-1",
+                    "url": "https://example.com/interview",
+                    "title": "Studio interview",
+                    "tier": "B",
+                    "primary": False,
+                    "independent": True,
+                }],
+                "claims": [{
+                    "text": "Музиканти змінили аранжування вже під час студійної роботи.",
+                    "source_ids": ["source-1"],
+                }],
+                "confidence": "verified",
+            })
+            self.assertTrue(saved["ok"])
+            generic = ContentPlan(
+                content_type="talk",
+                style="straight_radio",
+                announce_mode="forward",
+                target_seconds=10,
+            )
+            with patch.object(
+                api.content_planner, "plan", return_value=generic,
+            ), patch.object(
+                api, "_speech_asset", return_value={"ok": False, "error": "offline"},
+            ):
+                prepared = api.prepare_transition(
+                    current["id"], next_track["id"], force=True,
+                )
+
+            self.assertTrue(prepared["ok"])
+            self.assertEqual(prepared["transition"]["content_type"], "story")
+            transition_plan = json.loads(
+                prepared["transition"]["plan_json"] or "{}"
+            )
+            self.assertEqual(
+                transition_plan["story_id"],
+                saved["story"]["id"],
+            )
+            self.assertIn(
+                "студійн", prepared["transition"]["display_full"].casefold(),
+            )
+
     def test_prepared_and_aired_transition_is_logged_in_hour_rundown(self):
         with tempfile.TemporaryDirectory() as directory:
             api = RadioAPI(Path(directory))

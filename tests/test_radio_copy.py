@@ -86,6 +86,12 @@ class SpeechNormalizerTests(unittest.TestCase):
             normalize_for_speech("The Ocean — Ocean Eyes"),
             "Зе Оушн, Оушн Айз",
         )
+        self.assertEqual(
+            normalize_for_speech(
+                "A Thousand Suns, Living Things і Medal of Honor: Warfighter"
+            ),
+            "Ей Саузенд Санс, Лівінґ Сінґз і Медал Ов Онор, Ворфайтер",
+        )
 
     def test_golden_titles_override_local_letter_by_letter_transliteration(self):
         expected = {
@@ -94,6 +100,9 @@ class SpeechNormalizerTests(unittest.TestCase):
             "Faded": "Фейдед",
             "Rather Be": "Разер Бі",
             "High Hopes": "Хай Хоупс",
+            "CASTLE OF GLASS": "Касл Ов Ґлас",
+            "Thnks fr th Mmrs": "Сенкс Фор Зе Меморіз",
+            "ZITTI E BUONI": "Цітті Е Буоні",
         }
         for title, spoken in expected.items():
             with self.subTest(title=title):

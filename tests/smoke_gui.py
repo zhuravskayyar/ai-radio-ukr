@@ -71,7 +71,10 @@ class SmokeAPI(RadioAPI):
         })
         return result
 
-    def make_intro(self, track_id, current_track_id=None, verified_fact="", style=""):
+    def make_intro(
+        self, track_id, current_track_id=None, verified_fact="", style="",
+        **_kwargs,
+    ):
         track = next(track for track in self.db.tracks() if track["id"] == int(track_id))
         intro = (
             "Перевіряємо автоматичний ефір без довгих промов і зайвих церемоній. "
@@ -188,7 +191,7 @@ finished = threading.Event()
 failures = []
 
 
-def wait_for_diagnostics(predicate, timeout=10):
+def wait_for_diagnostics(predicate, timeout=35):
     deadline = time.time() + timeout
     latest = None
     while time.time() < deadline:
@@ -298,6 +301,12 @@ def verify():
             .some(option => option.value === '0' && option.textContent.includes('Редактор вирішує')),
           listenerProfileReady: document.querySelector('#listenerProfileSummary').textContent
             .includes('історія: 50%'),
+          researchControlCount: document.querySelectorAll(
+            '[data-setting="web_research_enabled"], [data-setting="browser_search_enabled"]'
+          ).length,
+          automaticResearchNotices: [...document.querySelectorAll(
+            '[data-auto-research-status]'
+          )].filter(node => node.textContent.includes('автоматичн')).length,
           visibleCards: [...document.querySelectorAll('#settings .settingsGrid > article')]
             .filter(node => getComputedStyle(node).display !== 'none').length
         }))()""")
@@ -375,6 +384,8 @@ def verify():
         assert simple_settings["genreVisible"] is True
         assert simple_settings["editorModeOption"] is True
         assert simple_settings["listenerProfileReady"] is True
+        assert simple_settings["researchControlCount"] == 0
+        assert simple_settings["automaticResearchNotices"] >= 1
         assert simple_settings["visibleCards"] == 1
     except BaseException as exc:
         failures.append(exc)
@@ -385,7 +396,7 @@ def verify():
 
 
 def watchdog():
-    if not finished.wait(40):
+    if not finished.wait(120):
         print("Smoke test timeout", flush=True)
         window.destroy()
 

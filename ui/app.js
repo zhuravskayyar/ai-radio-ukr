@@ -87,6 +87,7 @@ async function boot() {
     state.appVersion = data.app_version || '';
     ensureCharacterSettings();
     ensureLibraryActions();
+    bindSettingControls();
     fillSettings();
     resetSessionRotation();
     if (!applyRadioQueue(data.radio_queue, true)) {
@@ -252,18 +253,7 @@ function ensureCharacterSettings() {
             <option value="1">Увімкнений · фоновий yt-dlp</option>
           </select>
         </label>
-        <label>Web-перевірка метаданих
-          <select data-setting="web_research_enabled">
-            <option value="0">Вимкнена</option>
-            <option value="1">YouTube API / yt-dlp</option>
-          </select>
-        </label>
-        <label>Playwright fallback
-          <select data-setting="browser_search_enabled">
-            <option value="0">Вимкнений</option>
-            <option value="1">Увімкнений · лише за потреби</option>
-          </select>
-        </label>
+        <p class="hint" data-auto-research-status><b>Web-підводки працюють автоматично.</b> AI формує запит, Playwright або HTTP-пошук знаходить джерела, а програма готує перевірену STORY без окремого перемикача.</p>
         <label>YouTube Auth для 18+ fallback
           <select data-setting="youtube_auth_browser">
             <option value="off">Вимкнено</option>
@@ -278,7 +268,7 @@ function ensureCharacterSettings() {
         <p class="hint">Cookies браузера використовуються лише після помилки age restriction. Увійдіть у вибраному профілі в окремий підтверджений 18+ акаунт; масова автоматизація може спричинити обмеження акаунта.</p>
         <p class="hint"><b>Автоматичний режим активний.</b> Технічний дозвіл на пошук зберігається патчем. Користувач сам відповідає за право використовувати вибрані джерела й композиції.</p>
         <p id="queueStatus" class="hint">Буфер працює з локальної бібліотеки</p>
-        <p class="hint">Онлайн-пошук працює у фоні. Файли кешуються до встановленого ліміту, а плеєр не блокується під час поповнення.</p>
+        <p class="hint">Онлайн-пошук працює у фоні. Для треку без перевіреної STORY AI формує запит, Playwright або HTTP-пошук знаходить джерела, програма читає сторінки й лише після цього створює підводку. Файли кешуються до встановленого ліміту.</p>
       </article>`);
   }
 
@@ -467,6 +457,41 @@ function updateSettingOutput(key, value) {
   else if (key === 'queue_cache_max_gb') output.textContent = `${value} ГБ`;
   else if (['colloquiality', 'surzhyk', 'slang'].includes(key)) output.textContent = `${Math.round(Number(value) * 100)}%`;
   else output.textContent = `${value}%`;
+}
+
+function syncSettingControls(key, value, source = null) {
+  if (!key) return;
+  state.settings[key] = value;
+  $$(`[data-setting="${key}"]`).forEach(element => {
+    if (element !== source && element.value !== value) element.value = value;
+  });
+  updateSettingOutput(key, value);
+}
+
+function bindSettingControls() {
+  $$('[data-setting]').forEach(element => {
+    if (element.dataset.settingSyncBound === '1') return;
+    element.dataset.settingSyncBound = '1';
+    const sync = () => syncSettingControls(
+      element.dataset.setting,
+      element.value,
+      element,
+    );
+    element.addEventListener('input', sync);
+    element.addEventListener('change', sync);
+  });
+}
+
+function collectSettingsValues() {
+  const values = {};
+  $$('[data-setting]').forEach(element => {
+    const key = element.dataset.setting;
+    // Duplicate compact/advanced controls are synchronized above. Reading
+    // each key once prevents a hidden duplicate from overwriting the value
+    // the listener has just changed in the visible card.
+    if (!(key in values)) values[key] = element.value;
+  });
+  return values;
 }
 
 function fillSettings() {
@@ -1136,7 +1161,10 @@ function renderLibrary() {
       <span class="track"><b>${esc(track.title)}</b><small>${esc(track.artist)}</small></span>
       <button class="badge ${hasPlayable(track) ? 'ready' : ''}" onclick="resolveTrack(${index})">${isRejectedDiscoveryCache(track) ? '× СТАРИЙ КЕШ' : track.local_path ? `● ЗАВАНТАЖЕНО${Number(track.file_size_bytes || 0) ? ` · ${formatBytes(track.file_size_bytes)}` : ''}` : track.status === 'unavailable' ? '↻ ПОВТОРИТИ' : '↓ ЗАВАНТАЖИТИ'}</button>
       <button class="badge ${track.vocal_start_ms || track.outro_start_ms ? 'ready' : ''}" onclick="editTrackAnalysis(${index})">${track.vocal_start_ms || track.outro_start_ms ? '● ЗАДАНО' : '○ ДОДАТИ'}</button>
-      <button class="badge ${Number(track.story_count) ? 'ready' : ''}" onclick="addMusicStory(${index})">${Number(track.story_count) ? `● ${track.story_count} STORY${Number(track.story_corroborated_count) ? ` · ${track.story_corroborated_count}×2` : ''}` : '○ STORY'}</button>
+      <span class="storyActions">
+        <button class="badge ${Number(track.story_count) ? 'ready' : ''}" onclick="researchTrackIntro(${index})">${Number(track.story_count) ? `🌐 ${track.story_count} STORY${Number(track.story_corroborated_count) ? ` · ${track.story_corroborated_count}×2` : ''}` : '🌐 AI ФАКТ'}</button>
+        <button class="badge" onclick="addMusicStory(${index})" title="Додати перевірену історію вручну">＋</button>
+      </span>
       <button class="badge ${track.pronunciation_review ? '' : 'ready'}" onclick="${track.pronunciation_review ? 'autoPronunciation' : 'editPronunciation'}(${index})">${track.pronunciation_review ? '↻ АВТО ВИМОВА' : '● ВИМОВА'}</button>
       <button onclick="tune(${index});showPage('onair')">В ефір</button>
     </div>`).join('') || '<p class="hint">Перший трек з’явиться тут одразу після завантаження</p>';
@@ -1304,6 +1332,37 @@ window.editPronunciation = async index => {
   state.tracks[index] = result.track;
   render();
   toast('Вимову збережено для наступних ефірів');
+};
+
+window.researchTrackIntro = async index => {
+  const track = state.tracks[index];
+  toast(`Шукаю джерела й готую підводку: ${track.artist} — ${track.title}`);
+  try {
+    const result = await window.pywebview.api.research_track_intro(
+      track.id,
+      state.tracks[state.index]?.id || null,
+      true,
+    );
+    if (!result?.ok) throw new Error(result?.error || 'Не знайдено надійних джерел');
+    if (result.track) state.tracks[index] = result.track;
+    state.preparedQueue = state.preparedQueue.filter(
+      item => item.next_track_id !== track.id,
+    );
+    if (state.nextPreparedTransition?.next_track_id === track.id) {
+      state.nextPreparedTransition = null;
+    }
+    state.prefetchSignature = '';
+    if (result.intro?.display_text && state.tracks[state.index]?.id === track.id) {
+      $('#intro').textContent = `«${result.intro.display_text}»`;
+    }
+    render();
+    const sourceCount = Number(result.sources?.length || 0);
+    const browserLabel = result.browser_used ? ' через браузер' : '';
+    toast(`Підводку створено${browserLabel}: ${sourceCount} джерел`);
+  } catch (error) {
+    console.error('Track web research failed', error);
+    toast(`Не вдалося створити підводку: ${error?.message || error}`);
+  }
 };
 
 window.addMusicStory = async index => {
@@ -1632,7 +1691,32 @@ async function ensureIntro(track, currentTrack, force = false) {
       speechText: track.intro_speech || track.intro,
     };
   }
-  const result = await window.pywebview.api.make_intro(track.id, currentTrack?.id || null, '');
+  let result = null;
+  let researchError = '';
+  try {
+    const researched = await window.pywebview.api.research_track_intro(
+      track.id,
+      currentTrack?.id || null,
+      false,
+    );
+    if (researched?.ok && researched.intro?.ok) {
+      result = researched.intro;
+    } else {
+      researchError = researched?.error || '';
+    }
+  } catch (error) {
+    researchError = error?.message || String(error);
+  }
+  if (!result) {
+    result = await window.pywebview.api.make_intro(
+      track.id,
+      currentTrack?.id || null,
+      '',
+    );
+    if (researchError && result?.fallback && !result.provider_error) {
+      result.provider_error = `Web research: ${researchError}`;
+    }
+  }
   if (result.ok) {
     track.intro = result.display_text || result.intro;
     track.intro_speech = result.speech_text || track.intro;
@@ -2220,12 +2304,12 @@ if ($('#applyUpdate')) {
 
 $('#saveSettings').onclick = async () => {
   try {
-    const values = {};
-    $$('[data-setting]').forEach(element => values[element.dataset.setting] = element.value);
+    const values = collectSettingsValues();
     const simpleStationPrompt = $('#simpleStationPrompt');
     if (simpleStationPrompt) values.station_prompt = simpleStationPrompt.value;
     values.program_volume = state.settings.program_volume || $('#volume').value;
     const result = await window.pywebview.api.save_settings(values);
+    if (!result?.ok) throw new Error(result?.error || 'Backend не підтвердив запис');
     $('#settingsLog').textContent = result.log || '';
     state.settings = result.settings;
     state.prefetchSignature = '';
