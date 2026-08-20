@@ -806,6 +806,31 @@ class ContentPlanner:
         jaccard = len(set_a & set_b) / max(1, len(set_a | set_b))
         return max(sequence, jaccard)
 
+    @staticmethod
+    def repeated_sentence(text):
+        """Return a duplicated sentence from one intro, including close copies."""
+        sentences = re.findall(
+            r'[^.!?]+(?:[.!?]+(?:[»”"\']+)?)|[^.!?]+$',
+            text or "",
+        )
+        normalized = []
+        for sentence in sentences:
+            words = _words(re.sub(r"\[\[[^\]]+\]\]", " ", sentence))
+            if len(words) < 3:
+                continue
+            current = " ".join(words)
+            for previous, previous_words in normalized:
+                if current == previous:
+                    return sentence.strip()
+                if min(len(words), len(previous_words)) >= 6:
+                    sequence = SequenceMatcher(None, current, previous).ratio()
+                    set_a, set_b = set(words), set(previous_words)
+                    overlap = len(set_a & set_b) / max(1, min(len(set_a), len(set_b)))
+                    if sequence >= 0.92 or overlap >= 0.94:
+                        return sentence.strip()
+            normalized.append((current, words))
+        return ""
+
     def quality_gate(
         self, display_text, next_track, context, verified_fact="",
         verified_story_data=None, mention_policy=None, structure="",
@@ -829,6 +854,16 @@ class ContentPlanner:
                 return False, "виконавця названо повторно"
             if lowered.count(title) > 1:
                 return False, "назву треку повторено"
+            if structure == "story":
+                sentences = re.findall(
+                    r'[^.!?]+(?:[.!?]+(?:[»”"\']+)?)|[^.!?]+$',
+                    display_text or "",
+                )
+                if len(sentences) < 2:
+                    return False, "перед оголошенням треку немає історії"
+                final_sentence = sentences[-1].casefold()
+                if artist not in final_sentence or title not in final_sentence:
+                    return False, "оголошення треку має бути останнім реченням"
         elif policy == "artist_only":
             if not artist or artist not in lowered:
                 return False, "немає точного виконавця"
@@ -843,6 +878,8 @@ class ContentPlanner:
                 return False, "неявна репліка не має дозволеної структури"
         if display_text.count("?") > 1:
             return False, "забагато риторичних питань"
+        if self.repeated_sentence(display_text):
+            return False, "текст підводки повторюється"
         if not verified_fact and not verified_story_data and re.search(
             r"\b(альбом|реліз|випущен|записан|року)\b", lowered
         ):

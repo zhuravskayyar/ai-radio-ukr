@@ -233,6 +233,21 @@ class ContextAndPlanningTests(unittest.TestCase):
                 0.76,
             )
 
+    def test_quality_gate_rejects_repeated_sentences_inside_one_intro(self):
+        with tempfile.TemporaryDirectory() as directory:
+            planner = ContentPlanner(Database(Path(directory) / "radio.db"))
+            accepted, error = planner.quality_gate(
+                "Цей риф з'явився наприкінці нічної сесії. "
+                "Цей риф з'явився наприкінці нічної сесії. "
+                "Scorpions — «Wind of Change».",
+                {"artist": "Scorpions", "title": "Wind of Change"},
+                {"time": {}},
+                verified_story_data=["Цей риф з'явився наприкінці нічної сесії"],
+            )
+
+            self.assertFalse(accepted)
+            self.assertEqual(error, "текст підводки повторюється")
+
     def test_host_every_track_never_plans_a_silent_generic_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             db = Database(Path(directory) / "radio.db")

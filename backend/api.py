@@ -50,7 +50,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_AI_MAX_TOKENS = int(DEFAULTS["ai_max_tokens"])
 # Bump this whenever the editorial contract for generated host copy changes.
 # RadioAPI will then discard text and prepared transitions from older prompts.
-HOST_PROMPT_VERSION = "2026-08-14-fact-editor-personalization-v1"
+HOST_PROMPT_VERSION = "2026-08-20-deduplicated-story-order-v2"
 
 # Canonical genre families used to validate the model's structured genre tag.
 # The station prompt remains free-form; only explicit genre words participate
@@ -366,6 +366,29 @@ def split_spoken_sentences(text):
         for match in re.findall(r'[^.!?]+(?:[.!?]+(?:[»”"\']+)?)|[^.!?]+$', text or "")
         if match.strip()
     ]
+
+
+def _story_structure_issue(text):
+    """Validate STORY -> one final track announcement ordering."""
+    sentences = split_spoken_sentences(text)
+    marker_pattern = re.compile(r"\[\[NEXT_(?:TRACK|ARTIST|TITLE)\]\]")
+    markers = marker_pattern.findall(text or "")
+    if not markers:
+        return "немає фінального оголошення треку"
+    if len(markers) > 1:
+        return "трек оголошено більше одного разу"
+    if markers[0] != "[[NEXT_TRACK]]":
+        return "історія має завершуватися маркером NEXT_TRACK"
+    marker_sentences = [
+        index for index, sentence in enumerate(sentences)
+        if marker_pattern.search(sentence)
+    ]
+    if marker_sentences[-1] != len(sentences) - 1:
+        return "оголошення треку має бути останнім реченням"
+    story_sentences = sentences[:marker_sentences[0]]
+    if not any(spoken_word_count(sentence) >= 3 for sentence in story_sentences):
+        return "перед оголошенням треку немає історії"
+    return ""
 
 
 def _sounds_scripted(text):
@@ -4902,7 +4925,7 @@ artist_speech і title_speech мають бути записані україн�
         story_mode = content_type == "story"
         if story_mode:
             if length_class == "short":
-                sentence_target, allowed_sentences = 2, (1, 2)
+                sentence_target, allowed_sentences = 2, (2,)
             elif length_class == "feature":
                 sentence_target, allowed_sentences = 4, (3, 4)
             else:
@@ -5011,6 +5034,8 @@ MUSIC STORY MODE:
 
 Почни з унікального VERIFIED_STORY_HOOK або найсильнішої конкретної деталі. Не починай із загальної фрази про музику, життя, пам'ять, реальність чи «знайому мелодію». Кожне речення має додавати нову перевірену деталь. Не додавай порожнього морального висновку. Заверши фактичну історію до NEXT-маркера, а потім постав потрібний NEXT-маркер окремим останнім реченням без будь-яких слів поруч: система сама перетворить його на ефірний вихід. Якщо перевірених даних вистачає лише на три сильні речення, не розтягуй їх порожнім четвертим.
 
+Не повторюй речення, гачок, факт або оголошення треку навіть іншими словами. Порядок суворий: спочатку вся історія, потім рівно одне окреме фінальне речення з NEXT-маркером. Після оголошення треку тексту бути не може.
+
 Не додавай жодного факту поза VERIFIED_STORY_DATA. Не вигадуй діалоги, цитати, місця, дати, реакції, причини чи емоції. Пряму мову використовуй тільки з VERIFIED_QUOTE й не видавай переказ за дослівну цитату. Якщо дані передають пояснення виконавця або висновок указаного джерела, чітко подай це як їхню позицію, а не як думку ведучого. Одна історія — одна головна думка.
 """ if story_mode else ""
             program_rules = ""
@@ -5048,6 +5073,8 @@ MENTION_POLICY нижче. Не нумеруй треки й не подавай
 ГУМОР: максимум один основний жарт. Гумор сухий, природний, іноді самоіронічний. Не пояснюй жарт і не намагайся бути смішним у кожному реченні. Не вигадуй особистого досвіду ведучого.
 
 НЕ ПОЧИНАЙ словами «А зараз», «Наступна композиція», «Цікаво знати», «Друзі» або «В ефірі». НЕ ВЖИВАЙ: «чесно кажучи», «ця композиція точно», «він заслужив увагу», «а ось і», «неймовірний хіт», «легендарний хіт», «пориньмо», «іноді музика виростає з реального життя», «за знайомою мелодією буває інша реальність», «так музика залишає свій слід», «і це лишається з нами», «а зараз в ефірі», банальні мотиваційні фрази, пафос і довгі вступи. Не став більше одного риторичного питання. Не повторюй автоматично жарти про каву.
+
+Не повторюй у межах однієї відповіді те саме речення, факт, образ або анонс — ані дослівно, ані близьким перефразуванням.
 
 ФАКТИ: про пісню або виконавця фактичне твердження дозволене лише з VERIFIED_FACT або VERIFIED_STORY_DATA. Час і погоду можна брати тільки з CONTEXT_JSON і лише коли цього просить CONTENT DIRECTOR. Якщо даних немає, не здогадуйся. Не говори про релізи, альбоми, жанр, популярність, музичні списки чи біографію без перевірених даних. Не приписуй виконавцю думок або дій.
 
@@ -5232,9 +5259,17 @@ CONTEXT_JSON:
                 candidate = _canonicalize_verified_track_mentions(
                     response.get("candidate", ""), track, mention_policy
                 )
+                repeated_sentence = self.content_planner.repeated_sentence(candidate)
+                story_structure_error = (
+                    _story_structure_issue(candidate) if story_mode else ""
+                )
                 if story_mode:
                     candidate = _ground_story_copy(candidate, plan)
                 candidate_error = response.get("error", "")
+                if not candidate_error and repeated_sentence:
+                    candidate_error = "текст підводки повторюється"
+                if not candidate_error and story_structure_error:
+                    candidate_error = story_structure_error
                 candidate_sentences = split_spoken_sentences(candidate)
                 candidate_display = _replace_track_markers(candidate, track, current)
                 candidate_linguistic = normalize_linguistic(candidate).casefold()
@@ -5381,6 +5416,12 @@ CONTEXT_JSON:
                 "неправильна кількість речень",
                 "репліка не вміщується у доступний ефірний час",
                 "репліка надто коротка для запланованого ефірного часу",
+                "текст підводки повторюється",
+                "немає фінального оголошення треку",
+                "оголошення треку має бути останнім реченням",
+                "трек оголошено більше одного разу",
+                "історія має завершуватися маркером NEXT_TRACK",
+                "перед оголошенням треку немає історії",
             }
             # Spelling, punctuation, marker and factual gates are independent
             # for every candidate, so audit them concurrently as well.
@@ -5427,8 +5468,20 @@ CONTEXT_JSON:
                     "Не називай трек і не додавай жодного NEXT-маркера."
                 )
                 repair_sentence_rule = (
-                    "Три-п'ять природних змістовних речень."
+                    (
+                        "Рівно два природні речення: історія й фінальний анонс."
+                        if length_class == "short" else
+                        "Три-чотири природні змістовні речення."
+                        if length_class == "feature" else
+                        "Два-чотири природні змістовні речення."
+                    )
                     if story_mode else "Одне-два природні речення."
+                )
+                story_order_rule = (
+                    "Спочатку розкажи історію без повторів. Потім додай рівно одне "
+                    "окреме останнє речення з NEXT-маркером; після нього нічого не пиши."
+                    if story_mode else
+                    "Не повторюй жодного речення або анонсу."
                 )
                 editor_prompt = (
                     "Ти ефірний редактор і коректор української мови. Поверни тільки "
@@ -5436,7 +5489,8 @@ CONTEXT_JSON:
                     "Виправ правопис, пунктуацію, граматичне керування й причину відхилення, "
                     "але не додавай нових фактів. "
                     f"{repair_marker_rule} {weather_rule} {time_rule} "
-                    f"{repair_sentence_rule} Без радіоштампів і службового тексту."
+                    f"{repair_sentence_rule} {story_order_rule} "
+                    "Без радіоштампів і службового тексту."
                 )
                 with ThreadPoolExecutor(
                     max_workers=min(8, len(repair_queue))

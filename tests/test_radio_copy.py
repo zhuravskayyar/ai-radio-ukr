@@ -13,6 +13,7 @@ from backend.api import (
     _contains_weather_reference,
     _contains_unmarked_track_credit,
     _replace_track_markers,
+    _story_structure_issue,
     _replace_story_reveal,
     _ground_story_copy,
     _sounds_scripted,
@@ -183,6 +184,31 @@ class SpeechNormalizerTests(unittest.TestCase):
         self.assertNotIn("ідеальний перехід", copy)
         self.assertNotIn("після бурі", copy)
         self.assertEqual(copy.count("[[NEXT_TRACK]]"), 1)
+
+    def test_story_structure_requires_history_before_one_final_announcement(self):
+        self.assertEqual(
+            _story_structure_issue(
+                "Риф з'явився наприкінці нічної сесії. [[NEXT_TRACK]]."
+            ),
+            "",
+        )
+        self.assertEqual(
+            _story_structure_issue(
+                "[[NEXT_TRACK]]. Риф з'явився наприкінці нічної сесії."
+            ),
+            "оголошення треку має бути останнім реченням",
+        )
+        self.assertEqual(
+            _story_structure_issue("[[NEXT_TRACK]]."),
+            "перед оголошенням треку немає історії",
+        )
+        self.assertEqual(
+            _story_structure_issue(
+                "Риф з'явився наприкінці сесії. "
+                "[[NEXT_ARTIST]] — [[NEXT_TITLE]]."
+            ),
+            "трек оголошено більше одного разу",
+        )
 
     def test_story_grounding_keeps_only_verified_wording(self):
         grounded = _ground_story_copy(
@@ -431,6 +457,70 @@ class RadioCopyTests(unittest.TestCase):
             self.assertEqual(saved_track["intro"], result["display_text"])
             self.assertEqual(saved_track["intro_speech"], result["speech_text"])
             self.assertGreaterEqual(spoken_word_count(result["display_text"]), 4)
+
+    def test_repeated_story_gets_editor_retry_before_track_announcement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            api.db.save_settings({"intro_variants_per_provider": "1"})
+            track = next(item for item in api.db.tracks() if item["artist"] == "Scorpions")
+            provider = {
+                "name": "secondary", "url": "https://second.invalid",
+                "key": "two", "model": "deepseek/test",
+            }
+            candidates = iter([
+                "Риф з'явився наприкінці нічної сесії. "
+                "Риф з'явився наприкінці нічної сесії. "
+                "[[NEXT_TRACK]].",
+                "Риф з'явився наприкінці нічної сесії. "
+                "Продюсер запропонував залишити перший дубль. "
+                "[[NEXT_TRACK]].",
+            ])
+
+            def fake_completion(spec, *_args):
+                return {
+                    "provider": spec["name"],
+                    "candidate": next(candidates),
+                    "error": "",
+                }
+
+            with patch.object(api, "_ai_providers", return_value=[provider]), \
+                    patch("backend.api._chat_completion", side_effect=fake_completion) as mocked:
+                result = api.make_intro(
+                    track["id"],
+                    content_plan={
+                        "content_type": "story",
+                        "style": "music_story",
+                        "target_seconds": 20,
+                        "length_class": "normal",
+                        "word_min": 10,
+                        "mention_policy": "artist_and_title",
+                        "story_hook": "Ця пісня могла лишитися демоверсією",
+                        "story_data": [
+                            "Риф з'явився наприкінці нічної сесії",
+                            "Продюсер запропонував залишити перший дубль",
+                        ],
+                    },
+                    duration_seconds=20,
+                    store_track=False,
+                )
+
+            self.assertEqual(mocked.call_count, 2)
+            self.assertFalse(result["fallback"], result["provider_error"])
+            self.assertEqual(
+                api.content_planner.repeated_sentence(result["display_text"]),
+                "",
+            )
+            sentences = split_spoken_sentences(result["display_text"])
+            self.assertNotIn(track["artist"], " ".join(sentences[:-1]))
+            self.assertIn(track["artist"], sentences[-1])
+            self.assertTrue(any(
+                item.get("error") == "текст підводки повторюється"
+                for item in result["provider_diagnostics"]
+            ))
+            self.assertTrue(any(
+                item.get("ok") and item.get("repaired")
+                for item in result["provider_diagnostics"]
+            ))
 
     def test_two_ai_providers_are_used_for_pronunciation_consensus(self):
         with tempfile.TemporaryDirectory() as directory:
