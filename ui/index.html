@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vector Radio</title><link rel="icon" href="assets/vector-radio-logo.png"><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"><link rel="stylesheet" href="vector.css?v=auto"><link rel="stylesheet" href="boombox.css?v=auto"></head>
+<meta name="theme-color" content="#050607"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>Vector Radio</title><link rel="icon" href="assets/vector-radio-logo.png"><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"><link rel="stylesheet" href="vector.css?v=auto"><link rel="stylesheet" href="boombox.css?v=auto"></head>
 <body class="vector-ui">
 <div class="app">
   <header class="topbar">
@@ -324,5 +325,18 @@ OPENROUTER_API_KEY=sk-or-v1-ваш_ключ</pre>
     </main>
   </div>
 </div>
-<div id="toast" role="status" aria-live="polite"></div><script src="app.js?v=auto"></script>
+<section id="onlineConnection" class="online-connection" aria-labelledby="onlineConnectionTitle" hidden>
+  <form id="onlineConnectionForm" class="online-connection-card">
+    <img src="assets/vector-radio-logo.png" alt="Vector Radio">
+    <small>GITHUB PAGES CLIENT</small>
+    <h1 id="onlineConnectionTitle">Підключити онлайн-ефір</h1>
+    <p>GitHub розміщує вебплеєр, а музика й AI працюють на вашому захищеному Vector Radio Server.</p>
+    <label for="onlineServerUrl">HTTPS-адреса сервера</label>
+    <input id="onlineServerUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://radio.example.com" required>
+    <button type="submit">Підключити ефір</button>
+    <output id="onlineConnectionStatus" role="status" aria-live="polite"></output>
+    <a href="../">Повернутися на головну</a>
+  </form>
+</section>
+<div id="toast" role="status" aria-live="polite"></div><script src="online-config.js?v=auto"></script><script src="online-bridge.js?v=auto"></script><script src="app.js?v=auto"></script>
 </body></html>

@@ -52,6 +52,8 @@ Source: "https://www.python.org/ftp/python/3.11.9/{#PythonArchive}"; DestDir: "{
 Source: "python311._pth"; DestDir: "{app}\runtime"; Flags: ignoreversion
 Source: "get-pip.py"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: NeedPip
 Source: "..\main.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\online.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\Start Vector Radio Online.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Qwen_python_20260804_4sskbslqs.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\radio_pronunciation.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -61,6 +63,7 @@ Source: "..\data\playlist.json"; DestDir: "{app}\data"; Flags: ignoreversion
 Source: "..\data\tts_pronunciations.json"; DestDir: "{app}\data"; Flags: ignoreversion
 Source: "..\api.example.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\INSTALL_WINDOWS.md"; DestDir: "{app}"; DestName: "API_AND_INSTALL.md"; Flags: ignoreversion
+Source: "..\docs\ONLINE.md"; DestDir: "{app}"; DestName: "ONLINE.md"; Flags: ignoreversion
 Source: "https://go.microsoft.com/fwlink/p/?LinkId=2124703"; DestDir: "{tmp}"; DestName: "{#WebViewInstaller}"; ExternalSize: 2000000; Flags: external download ignoreversion deleteafterinstall; Check: NeedWebView2
 
 [Dirs]
@@ -70,7 +73,9 @@ Name: "{app}\music"
 
 [Icons]
 Name: "{autoprograms}\Vector Radio"; Filename: "{app}\VectorRadio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\vector-radio.ico"
+Name: "{autoprograms}\Vector Radio Online"; Filename: "{app}\Start Vector Radio Online.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\assets\vector-radio.ico"
 Name: "{autoprograms}\Vector Radio — інструкція API"; Filename: "{app}\API_AND_INSTALL.md"; WorkingDir: "{app}"
+Name: "{autoprograms}\Vector Radio — online інструкція"; Filename: "{app}\ONLINE.md"; WorkingDir: "{app}"
 Name: "{autodesktop}\Vector Radio"; Filename: "{app}\VectorRadio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\vector-radio.ico"; Tasks: desktopicon
 
 [Run]

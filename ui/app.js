@@ -46,6 +46,7 @@ const state = {
   watchdogState: 'armed',
   boomboxSource: 'radio',
   pendingTrackEndTrackId: null,
+  online: null,
 };
 
 let booted = false;
@@ -705,6 +706,11 @@ async function boot() {
     if (!data?.ok) throw new Error(data?.error || 'Backend не відповів');
     state.tracks = data.tracks;
     state.settings = data.settings;
+    state.online = data.online || null;
+    if (state.online?.role) {
+      document.body.dataset.onlineMode = '1';
+      document.body.dataset.onlineRole = state.online.role;
+    }
     applyUiTheme(state.settings.ui_theme || storedUiTheme());
     state.pilotClock = data.pilot_clock || null;
     state.broadcastSafety = data.broadcast_safety || null;
@@ -2189,7 +2195,12 @@ window.resolveTrack = async index => {
 };
 
 function localUrl(path) {
-  return '/' + path.split('/').map(encodeURIComponent).join('/');
+  const value = String(path || '').trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  const encoded = value.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+  const apiBase = String(window.VECTOR_RADIO_API_BASE || '').replace(/\/+$/, '');
+  if (apiBase && /^(?:media|cover)\//.test(encoded)) return `${apiBase}/${encoded}`;
+  return '/' + encoded;
 }
 
 function setOutputVolume(percent) {
@@ -2219,7 +2230,12 @@ async function playAtVolume(volume) {
   if (track.local_path) {
     if (!state.localAudio || state.audioTrackId !== track.id || state.localAudio.ended) {
       if (state.localAudio) state.localAudio.pause();
-      const audio = new Audio(localUrl(track.local_path));
+      const audioUrl = localUrl(track.local_path);
+      const audio = new Audio();
+      if (new URL(audioUrl, location.href).origin !== location.origin) {
+        audio.crossOrigin = 'anonymous';
+      }
+      audio.src = audioUrl;
       state.localAudio = audio;
       state.audioTrackId = track.id;
       connectBoomboxAnalyser(audio);
