@@ -793,7 +793,7 @@ class PreparedTransitionTests(unittest.TestCase):
                 style="straight_radio",
                 announce_mode="station_id",
                 target_seconds=4,
-                liner_text="Адам Вектор, цифровий ведучий LUMEN RADIO.",
+                liner_text="Адам Вектор, цифровий ведучий Vector Radio.",
                 clock_version=PILOT_CLOCK_VERSION,
                 clock_slot_id="hour_open",
                 clock_slot_name="Відкриття години",

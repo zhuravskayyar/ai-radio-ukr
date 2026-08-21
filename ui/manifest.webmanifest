@@ -1,0 +1,20 @@
+{
+  "name": "Vector Radio",
+  "short_name": "Vector Radio",
+  "description": "Онлайн-радіо з цифровим ведучим Адамом Вектором",
+  "lang": "uk",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050607",
+  "theme_color": "#050607",
+  "icons": [
+    {
+      "src": "assets/vector-radio-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

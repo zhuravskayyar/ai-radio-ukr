@@ -52,9 +52,9 @@ FORBIDDEN_CLICHES = (
 )
 
 LINERS = (
-    "LUMEN RADIO. Музика лишається.",
-    "Адам Вектор, цифровий ведучий LUMEN RADIO.",
-    "LUMEN RADIO. Без зайвого шуму.",
+    "Vector Radio. Музика лишається.",
+    "Адам Вектор, цифровий ведучий Vector Radio.",
+    "Vector Radio. Без зайвого шуму.",
     "Адам Вектор у ефірі. Далі говорить музика.",
 )
 
@@ -402,7 +402,7 @@ class ContentPlanner:
                     style="straight_radio",
                     announce_mode="station_id",
                     target_seconds=4,
-                    liner_text="Адам Вектор, цифровий ведучий LUMEN RADIO.",
+                    liner_text="Адам Вектор, цифровий ведучий Vector Radio.",
                     directive="Hard point :45. Короткий перевірений station ID і негайний вихід у музику.",
                     memory_keys=[clock_slot_key],
                     structure="station",

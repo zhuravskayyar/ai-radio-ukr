@@ -410,7 +410,21 @@ def _spoken_temperature(match) -> str:
 
 def normalize_for_speech(text: str, tracks=()) -> str:
     """Build a stable Edge/Piper-friendly copy without changing display text."""
-    speech = normalize_linguistic(text)
+    # Keep the product name pronounceable even in legacy/cached copy.  The
+    # English spelling otherwise reaches some engines as separate letters.
+    speech = re.sub(
+        r"\b(?:LUMEN|Люмен)\s+(?:RADIO|Радіо)\b",
+        "Вектор Радіо",
+        text,
+        flags=re.IGNORECASE,
+    )
+    speech = re.sub(
+        r"\bVector\s+Radio\b",
+        "Вектор Радіо",
+        speech,
+        flags=re.IGNORECASE,
+    )
+    speech = normalize_linguistic(speech)
     mappings = {}
     for track in tracks or ():
         artist = str(track.get("artist", "")).strip()

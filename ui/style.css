@@ -20,6 +20,32 @@
   --display:'Inter','IBM Plex Sans','Segoe UI',Arial,sans-serif;
 }
 
+/* The public online role is intentionally playback-only. The same HTML still
+   powers the authenticated operator console and the native desktop build. */
+body[data-online-role="listener"] [data-page="settings"],
+body[data-online-role="listener"] #settings,
+body[data-online-role="listener"] #refreshAiLibrary,
+body[data-online-role="listener"] .updateMonitor,
+body[data-online-role="listener"] #trackTable button,
+body[data-online-role="listener"] #generate,
+body[data-online-role="listener"] #queueCorrection,
+body[data-online-role="listener"] #technicalPause {
+  display: none !important;
+}
+
+.online-connection[hidden]{display:none}
+.online-connection{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:rgba(5,6,7,.94);color:#f7f3e8}
+.online-connection-card{width:min(520px,100%);display:grid;gap:14px;padding:clamp(24px,6vw,46px);border:3px solid #f7f3e8;background:#11110f;box-shadow:12px 12px 0 #d92e16}
+.online-connection-card img{width:min(270px,75%);margin:0 auto 8px}
+.online-connection-card small{color:#ef4a23;font-weight:900;letter-spacing:.15em;text-align:center}
+.online-connection-card h1{margin:0;font-size:clamp(28px,7vw,48px);line-height:.95;text-align:center;text-transform:uppercase}
+.online-connection-card p{margin:4px 0;color:#c5bfae;line-height:1.55;text-align:center}
+.online-connection-card label{font-size:12px;font-weight:900;text-transform:uppercase}
+.online-connection-card input{width:100%;padding:13px;border:2px solid #f7f3e8;background:#050607;color:#fff}
+.online-connection-card button{padding:13px;border-color:#ef4a23;background:#ef4a23;color:#050607;box-shadow:none}
+.online-connection-card output{min-height:20px;color:#ffb09c;font-size:12px;text-align:center}
+.online-connection-card a{color:#d9d3c5;text-align:center;text-underline-offset:4px}
+
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
 button,input,select,textarea{font:inherit}

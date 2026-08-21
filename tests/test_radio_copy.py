@@ -94,6 +94,16 @@ class SpeechNormalizerTests(unittest.TestCase):
             "Ей Саузенд Санс, Лівінґ Сінґз і Медал Ов Онор, Ворфайтер",
         )
 
+    def test_station_brand_is_spoken_as_vector_radio(self):
+        self.assertEqual(
+            normalize_for_speech("LUMEN RADIO. Далі музика."),
+            "Вектор Радіо. Далі музика.",
+        )
+        self.assertEqual(
+            normalize_for_speech("Vector Radio в ефірі."),
+            "Вектор Радіо в ефірі.",
+        )
+
     def test_golden_titles_override_local_letter_by_letter_transliteration(self):
         expected = {
             "Grenade": "Гренейд",

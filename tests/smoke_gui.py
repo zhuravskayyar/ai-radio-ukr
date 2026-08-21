@@ -233,6 +233,39 @@ def verify():
           mainLibraryText: document.querySelector('#mainDownloadTitle').textContent,
           diagnostics: window.radioDiagnostics()
         }))()""")
+        window.evaluate_js("applyUiTheme('boombox', false)")
+        time.sleep(0.45)
+        boombox_before_scroll = window.evaluate_js("""(() => ({
+          visible: getComputedStyle(document.querySelector('#boomboxInterface')).display !== 'none',
+          frequencyCharacters: document.querySelectorAll(
+            '#boomboxFrequency .sixteen-segment-character'
+          ).length,
+          marqueeCharacters: document.querySelectorAll(
+            '#boomboxSegmentMarquee .sixteen-segment-character'
+          ).length,
+          segmentsPerCharacter: document.querySelector(
+            '#boomboxSegmentMarquee .sixteen-segment-character'
+          )?.children.length || 0,
+          litSegments: document.querySelectorAll(
+            '#boomboxSegmentMarquee .sixteen-segment.is-on'
+          ).length,
+          reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+          marqueeLabel: document.querySelector('#boomboxSegmentMarquee').getAttribute('aria-label'),
+          title: document.querySelector('#boomboxTitle').textContent,
+          artist: document.querySelector('#boomboxArtist').textContent,
+          nowTitle: document.querySelector('#nowTitle').textContent,
+          nowArtist: document.querySelector('#nowArtist').textContent,
+          frame: [...document.querySelectorAll(
+            '#boomboxSegmentMarquee .sixteen-segment-character'
+          )].map(node => node.dataset.character).join(''),
+          diagnostics: window.radioDiagnostics()
+        }))()""")
+        time.sleep(0.8)
+        boombox_after_scroll = window.evaluate_js("""(() => ({
+          frame: [...document.querySelectorAll(
+            '#boomboxSegmentMarquee .sixteen-segment-character'
+          )].map(node => node.dataset.character).join('')
+        }))()""")
         print("during_intro", json.dumps(during_intro, ensure_ascii=True), flush=True)
         after_intro = wait_for_diagnostics(
             lambda value: value["automationBusy"] is False
@@ -246,6 +279,14 @@ def verify():
             lambda value: value["currentTrackId"] != first_track_id
             and value["localPlaying"] is True,
         )
+        boombox_after_transition = window.evaluate_js("""(() => ({
+          marqueeLabel: document.querySelector('#boomboxSegmentMarquee').getAttribute('aria-label'),
+          title: document.querySelector('#boomboxTitle').textContent,
+          artist: document.querySelector('#boomboxArtist').textContent,
+          nowTitle: document.querySelector('#nowTitle').textContent,
+          nowArtist: document.querySelector('#nowArtist').textContent,
+          diagnostics: window.radioDiagnostics()
+        }))()""")
         print("after_transition", json.dumps(after_transition, ensure_ascii=True), flush=True)
         wait_for_diagnostics(
             lambda value: value["automationBusy"] is False
@@ -312,8 +353,11 @@ def verify():
         }))()""")
         result = {
             "during_intro": during_intro,
+            "boombox_before_scroll": boombox_before_scroll,
+            "boombox_after_scroll": boombox_after_scroll,
             "after_intro": after_intro,
             "after_transition": after_transition,
+            "boombox_after_transition": boombox_after_transition,
             "after_watchdog": after_watchdog,
             "manual_pause": manual_pause,
             "library": library,
@@ -332,6 +376,20 @@ def verify():
         assert during_intro["settingsGearVisible"] is True
         assert during_intro["libraryButtonVisible"] is True
         assert during_intro["mainLibraryStatusVisible"] is True
+        assert boombox_before_scroll["visible"] is True
+        assert boombox_before_scroll["frequencyCharacters"] >= 3
+        assert boombox_before_scroll["marqueeCharacters"] >= 10
+        assert boombox_before_scroll["segmentsPerCharacter"] == 16
+        assert boombox_before_scroll["litSegments"] > 0
+        assert boombox_before_scroll["title"] == boombox_before_scroll["nowTitle"]
+        assert boombox_before_scroll["artist"] == boombox_before_scroll["nowArtist"]
+        assert boombox_before_scroll["marqueeLabel"] == (
+            f'{boombox_before_scroll["artist"]} — {boombox_before_scroll["title"]}'
+        )
+        assert boombox_before_scroll["diagnostics"]["metadataInSync"] is True
+        assert boombox_before_scroll["reducedMotion"] or (
+            boombox_before_scroll["frame"] != boombox_after_scroll["frame"]
+        )
         assert "Бібліотека" in during_intro["mainLibraryText"]
         assert intro_diagnostics["radioBufferSize"] == 10
         assert intro_diagnostics["radioBufferTarget"] == 10
@@ -350,6 +408,12 @@ def verify():
         assert len(after_intro["scheduledTrackIds"]) == len(set(after_intro["scheduledTrackIds"]))
         assert first_track_id not in after_intro["scheduledTrackIds"]
         assert after_transition["currentTrackId"] != first_track_id
+        assert boombox_after_transition["title"] == boombox_after_transition["nowTitle"]
+        assert boombox_after_transition["artist"] == boombox_after_transition["nowArtist"]
+        assert boombox_after_transition["marqueeLabel"] == (
+            f'{boombox_after_transition["artist"]} — {boombox_after_transition["title"]}'
+        )
+        assert boombox_after_transition["diagnostics"]["metadataInSync"] is True
         assert after_transition["localPlaying"] is True
         assert after_transition["tracksSinceHost"] == 0
         assert after_transition["sessionPlayedTracks"] == 2

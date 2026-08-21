@@ -138,6 +138,61 @@ class MusicResearchToolTests(unittest.TestCase):
         self.assertTrue(result["browser_used"])
         self.assertEqual(result["source"], "google:playwright")
 
+    def test_google_youtube_resolver_keeps_only_ranked_video_urls(self):
+        web_results = {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Linkin Park - Numb (Official Music Video)",
+                    "url": "https://www.youtube.com/watch?v=numb123456",
+                    "source": "google:playwright",
+                },
+                {
+                    "title": "Numb - Linkin Park (Official Audio)",
+                    "url": "https://youtu.be/numb654321?t=15",
+                    "source": "google:playwright",
+                },
+                {
+                    "title": "Linkin Park - Numb cover",
+                    "url": "https://www.youtube.com/watch?v=cover12345",
+                    "source": "google:playwright",
+                },
+                {
+                    "title": "Numb playlist",
+                    "url": "https://www.youtube.com/playlist?list=PL123",
+                    "source": "google:playwright",
+                },
+                {
+                    "title": "Linkin Park - Numb",
+                    "url": "https://example.com/numb",
+                    "source": "google:playwright",
+                },
+            ],
+            "attempts": [{"provider": "google", "ok": True}],
+            "browser_used": True,
+        }
+        with patch.object(
+            self.tools, "search_web", return_value=web_results,
+        ) as search_web:
+            result = self.tools.search_youtube_on_google(
+                "Linkin Park", "Numb", limit=5,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            {item["id"] for item in result["results"]},
+            {"numb123456", "numb654321"},
+        )
+        self.assertTrue(all(
+            item["url"].startswith("https://www.youtube.com/watch?v=")
+            for item in result["results"]
+        ))
+        query = search_web.call_args.args[0]
+        self.assertIn("site:youtube.com/watch", query)
+        self.assertIn('"Linkin Park"', query)
+        self.assertIn('"Numb"', query)
+        self.assertTrue(result["browser_used"])
+
     def test_filtered_api_results_continue_to_yt_dlp(self):
         blocked = [{
             "id": "cover", "artist": "Someone", "title": "SHUM cover",

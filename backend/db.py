@@ -25,7 +25,8 @@ def _auto_pronunciation_values(artist, title):
 
 
 DEFAULTS = {
-    "station_name": "LUMEN RADIO",
+    "ui_theme": "vector",
+    "station_name": "Vector Radio",
     "host_name": "Адам Вектор",
     "station_city": "Київ",
     "station_timezone": "Europe/Kyiv",
@@ -118,6 +119,11 @@ DEFAULTS = {
     "provider_health": "{}",
 }
 
+AUTOMATIC_ON_SETTINGS = {
+    "web_research_enabled",
+    "browser_search_enabled",
+}
+
 
 class Database:
     def __init__(self, path: Path):
@@ -167,6 +173,7 @@ class Database:
                     pronunciation_source TEXT DEFAULT '',
                     match_score REAL DEFAULT 0,
                     local_path TEXT DEFAULT '',
+                    cover_path TEXT DEFAULT '',
                     local_only INTEGER DEFAULT 0,
                     library_source TEXT DEFAULT '',
                     play_count INTEGER DEFAULT 0,
@@ -346,6 +353,8 @@ class Database:
                 db.execute("ALTER TABLE tracks ADD COLUMN match_score REAL DEFAULT 0")
             if "local_path" not in columns:
                 db.execute("ALTER TABLE tracks ADD COLUMN local_path TEXT DEFAULT ''")
+            if "cover_path" not in columns:
+                db.execute("ALTER TABLE tracks ADD COLUMN cover_path TEXT DEFAULT ''")
             if "local_only" not in columns:
                 db.execute("ALTER TABLE tracks ADD COLUMN local_only INTEGER DEFAULT 0")
             if "artist_speech" not in columns:
@@ -758,6 +767,17 @@ class Database:
                 )
                 db.execute("DELETE FROM transitions")
                 db.execute("PRAGMA user_version=22")
+            if schema_version < 23:
+                # Rename only known legacy defaults; preserve any custom name.
+                db.execute(
+                    "UPDATE settings SET value='Vector Radio' "
+                    "WHERE key='station_name' AND value IN "
+                    "('LUMEN RADIO','Lumen Radio','Lumen radio',"
+                    "'Люмен Радіо','ЛЮМЕН РАДІО')"
+                )
+                # Prepared speech may still contain the retired brand.
+                db.execute("DELETE FROM transitions")
+                db.execute("PRAGMA user_version=23")
             for row in db.execute("SELECT * FROM tracks"):
                 automatic = _auto_pronunciation_values(row["artist"], row["title"])
                 updates = {}
@@ -947,7 +967,7 @@ class Database:
         allowed = {
             "youtube_id", "youtube_title", "status", "intro", "intro_speech",
             "intro_style", "artist_speech", "title_speech", "match_score",
-            "local_path", "play_count", "last_played", "previous_rank",
+            "local_path", "cover_path", "play_count", "last_played", "previous_rank",
             "chart_weeks", "duration_ms", "bpm", "energy", "mood", "genre",
             "intro_end_ms", "vocal_start_ms", "outro_start_ms",
             "hard_end_ms", "end_type", "artist_speech_confidence",
@@ -1043,10 +1063,18 @@ class Database:
             return {row["key"]: row["value"] for row in db.execute("SELECT * FROM settings")}
 
     def save_settings(self, values):
+        normalized = {
+            key: ("1" if key in AUTOMATIC_ON_SETTINGS else value)
+            for key, value in values.items()
+        }
         with closing(self.connect()) as db, db:
             db.executemany(
                 "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                [(key, str(value)) for key, value in values.items() if key in DEFAULTS],
+                [
+                    (key, str(value))
+                    for key, value in normalized.items()
+                    if key in DEFAULTS
+                ],
             )
 
     def track(self, track_id):

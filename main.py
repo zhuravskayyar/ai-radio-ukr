@@ -12,7 +12,10 @@ import time
 
 from backend.api import RadioAPI
 
-_CACHEBUST_RE = re.compile(r'(style\.css|library\.css|radio-copy\.css|vector\.css|app\.js)\?v=auto')
+_CACHEBUST_RE = re.compile(
+    r'(style\.css|library\.css|radio-copy\.css|vector\.css|boombox\.css|'
+    r'online-config\.js|online-bridge\.js|app\.js)\?v=auto'
+)
 _SINGLE_INSTANCE_MUTEX_NAME = "Global\\VectorRadioSingleInstance"
 _SINGLE_INSTANCE_HANDLE = None
 

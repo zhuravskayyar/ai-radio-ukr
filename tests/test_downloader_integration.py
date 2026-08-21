@@ -9,6 +9,100 @@ from backend.api import RadioAPI
 
 
 class LumenDownloaderIntegrationTests(unittest.TestCase):
+    def test_official_title_with_translation_suffix_is_accepted(self):
+        candidate = {
+            "id": "EGLoIaHwKfE",
+            "url": "https://www.youtube.com/watch?v=EGLoIaHwKfE",
+            "title": "SadSvit - Касета (Cassette 2021)",
+            "artist": "SadSvit",
+            "uploader": "SadSvit",
+            "channel": "SadSvit",
+            "duration": 145,
+        }
+        settings = {"queue_min_duration": 120, "queue_max_duration": 480}
+
+        accepted = RadioAPI._queue_candidate_allowed(
+            candidate, settings, [], set(),
+            recommendation={"artist": "SadSvit", "title": "Касета"},
+        )
+
+        self.assertTrue(accepted)
+        self.assertEqual(candidate["match_score"], 1.0)
+
+    def test_one_word_title_does_not_accept_a_longer_song_name(self):
+        candidate = {
+            "id": "wrong-song",
+            "url": "https://www.youtube.com/watch?v=wrong-song",
+            "title": "The Soft Moon - Black Sabbath (Official Audio)",
+            "artist": "The Soft Moon",
+            "uploader": "The Soft Moon",
+            "channel": "The Soft Moon",
+            "duration": 240,
+        }
+        settings = {"queue_min_duration": 120, "queue_max_duration": 480}
+
+        accepted = RadioAPI._queue_candidate_allowed(
+            candidate, settings, [], set(),
+            recommendation={"artist": "The Soft Moon", "title": "Black"},
+        )
+
+        self.assertFalse(accepted)
+
+    def test_ai_playlist_is_built_before_any_web_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            plan = {
+                "tracks": [{"artist": "Linkin Park", "title": "Numb"}],
+                "similar_tracks": [],
+                "backup_tracks": [],
+            }
+            with patch.object(
+                api, "_queue_search_plan", return_value=plan,
+            ) as queue_search:
+                count = api._refill_discovery_plan_cache(
+                    api.db.settings(), [],
+                )
+
+            self.assertEqual(count, 1)
+            self.assertFalse(queue_search.call_args.kwargs["use_research_tools"])
+
+    def test_metadata_fallback_still_gives_downloader_a_direct_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            direct_url = "https://www.youtube.com/watch?v=metadata1"
+            fallback = {
+                "ok": True,
+                "results": [{
+                    "id": "metadata1",
+                    "url": direct_url,
+                    "title": "Linkin Park - Numb",
+                    "source": "youtube:yt-dlp",
+                }],
+                "attempts": [],
+            }
+            downloaded = {
+                "path": Path(directory) / "Numb.mp3",
+                "info": {"id": "metadata1"},
+            }
+            with patch.object(
+                api.music_research, "search_youtube_on_google",
+                return_value={"ok": False, "results": []},
+            ), patch.object(
+                api.music_research, "search_music", return_value=fallback,
+            ), patch.object(
+                api, "_download_audio_with_lumen", return_value=downloaded,
+            ) as download:
+                result, resolved = api._download_playlist_entry_from_youtube_url(
+                    {"artist": "Linkin Park", "title": "Numb"},
+                    Path(directory), validator=lambda _info: True,
+                )
+
+            self.assertEqual(result, downloaded)
+            self.assertEqual(resolved["resolver"], "YouTube metadata")
+            self.assertEqual(download.call_args.args[0], direct_url)
+            self.assertFalse(download.call_args.kwargs["search"])
+            self.assertFalse(download.call_args.kwargs["music_search"])
+
     def test_downloader_reports_safe_byte_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "Track [safe-id].webm"
@@ -477,7 +571,19 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 },
             }
 
+            google_result = {
+                "ok": True,
+                "results": [{
+                    "id": "official-url",
+                    "url": "https://www.youtube.com/watch?v=official-url",
+                    "title": "Linkin Park - Numb (Official Music Video)",
+                    "source": "google:playwright",
+                }],
+            }
             with patch.object(
+                api.music_research, "search_youtube_on_google",
+                return_value=google_result,
+            ), patch.object(
                 api, "_download_audio_with_lumen", return_value=downloaded,
             ) as download:
                 result = api.resolve_track(track["id"])
@@ -486,10 +592,15 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
             self.assertEqual(result["local_path"], "downloads/Numb [official].webm")
             self.assertEqual(result["track"]["local_path"], result["local_path"])
             self.assertEqual(result["track"]["duration_ms"], 187_000)
-            self.assertTrue(download.call_args.kwargs["search"])
-            self.assertTrue(download.call_args.kwargs["music_search"])
+            self.assertEqual(
+                download.call_args.args[0],
+                "https://www.youtube.com/watch?v=official-url",
+            )
+            self.assertFalse(download.call_args.kwargs["search"])
+            self.assertFalse(download.call_args.kwargs["music_search"])
+            self.assertEqual(result["resolver"], "Google")
 
-    def test_ai_recommendation_goes_directly_to_lumen_downloader_search(self):
+    def test_ai_playlist_entry_is_resolved_by_google_before_downloader(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api = RadioAPI(root)
@@ -510,9 +621,11 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
             }
 
             def fake_download(item, output_dir, **kwargs):
-                self.assertEqual(item, "Linkin Park - Numb")
-                self.assertTrue(kwargs["search"])
-                self.assertTrue(kwargs["music_search"])
+                self.assertEqual(
+                    item, "https://www.youtube.com/watch?v=official-url",
+                )
+                self.assertFalse(kwargs["search"])
+                self.assertFalse(kwargs["music_search"])
                 self.assertTrue(kwargs["validator"](info))
                 return {"path": audio_path, "info": info}
 
@@ -523,7 +636,19 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 "target_mood": ["melancholic"],
                 "avoid": [],
             }
+            google_result = {
+                "ok": True,
+                "results": [{
+                    "id": "official-url",
+                    "url": "https://www.youtube.com/watch?v=official-url",
+                    "title": "Linkin Park - Numb (Official Music Video)",
+                    "source": "google:playwright",
+                }],
+            }
             with patch.object(api, "_queue_search_plan", return_value=plan), patch.object(
+                api.music_research, "search_youtube_on_google",
+                return_value=google_result,
+            ) as google_search, patch.object(
                 api, "_download_audio_with_lumen", side_effect=fake_download,
             ):
                 track = api._discover_queue_track([])
@@ -533,6 +658,9 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
             self.assertEqual(track["library_source"], "ai")
             self.assertEqual(track["local_path"], "downloads/queue/Numb [official].webm")
             self.assertGreaterEqual(track["match_score"], 0.75)
+            google_search.assert_called_once_with(
+                "Linkin Park", "Numb", limit=5, allow_browser=True,
+            )
 
     def test_discovery_uses_similar_tracks_when_primary_recommendation_is_fake(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -560,28 +688,49 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 "target_mood": ["alt rock"],
                 "avoid": [],
             }
-            calls = []
+            lookups = []
+            downloads = []
 
             def fake_download(item, output_dir, **kwargs):
-                calls.append(item)
-                if len(calls) == 1:
-                    raise RuntimeError("no exact result")
+                downloads.append(item)
                 self.assertTrue(kwargs["validator"](info))
                 return {"path": audio_path, "info": info}
 
+            def fake_google(artist, title, **_kwargs):
+                lookups.append((artist, title))
+                if artist == "Fake Artist":
+                    return {"ok": False, "results": []}
+                return {
+                    "ok": True,
+                    "results": [{
+                        "id": "official-url",
+                        "url": "https://www.youtube.com/watch?v=official-url",
+                        "title": "Linkin Park - Numb (Official Music Video)",
+                        "source": "google:playwright",
+                    }],
+                }
+
             with patch.object(api, "_queue_search_plan", return_value=plan), patch.object(
+                api.music_research, "search_youtube_on_google",
+                side_effect=fake_google,
+            ), patch.object(
+                api.music_research, "search_music",
+                return_value={"ok": False, "results": [], "attempts": []},
+            ), patch.object(
                 api, "_download_audio_with_lumen", side_effect=fake_download,
             ):
                 track = api._discover_queue_track([])
 
-            self.assertEqual(calls, [
-                "Fake Artist - Fake Song",
-                "Fake Artist official audio",
-                "Linkin Park - Numb",
+            self.assertEqual(lookups, [
+                ("Fake Artist", "Fake Song"),
+                ("Linkin Park", "Numb"),
+            ])
+            self.assertEqual(downloads, [
+                "https://www.youtube.com/watch?v=official-url",
             ])
             self.assertEqual((track["artist"], track["title"]), ("Linkin Park", "Numb"))
 
-    def test_discovery_corrects_fake_title_with_real_track_by_same_artist(self):
+    def test_discovery_never_substitutes_another_song_for_fake_ai_title(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api = RadioAPI(root)
@@ -589,17 +738,6 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 "dynamic_discovery_enabled": "1",
                 "licensed_sources_confirmed": "1",
             })
-            audio_path = root / "downloads" / "queue" / "Numb [official].webm"
-            audio_path.parent.mkdir(parents=True, exist_ok=True)
-            audio_path.write_bytes(b"local-audio")
-            info = {
-                "id": "official",
-                "title": "Linkin Park - Numb (Official Music Video)",
-                "artist": "Linkin Park",
-                "uploader": "Linkin Park",
-                "duration": 187,
-                "webpage_url": "https://example.test/official",
-            }
             plan = {
                 "tracks": [{"artist": "Linkin Park", "title": "Imaginary Song"}],
                 "similar_tracks": [],
@@ -607,29 +745,19 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 "target_mood": ["alt rock"],
                 "avoid": [],
             }
-            calls = []
-
-            def fake_download(item, output_dir, **kwargs):
-                calls.append(item)
-                if len(calls) == 1:
-                    raise RuntimeError("no exact result")
-                self.assertEqual(item, "Linkin Park official audio")
-                self.assertFalse(kwargs["music_search"])
-                self.assertTrue(kwargs["validator"](info))
-                return {"path": audio_path, "info": info}
-
             with patch.object(api, "_queue_search_plan", return_value=plan), patch.object(
-                api, "_download_audio_with_lumen", side_effect=fake_download,
-            ):
-                track = api._discover_queue_track([])
+                api.music_research, "search_youtube_on_google",
+                return_value={"ok": False, "results": []},
+            ), patch.object(
+                api.music_research, "search_music",
+                return_value={"ok": False, "results": [], "attempts": []},
+            ), patch.object(
+                api, "_download_audio_with_lumen",
+            ) as download:
+                with self.assertRaises(RuntimeError):
+                    api._discover_queue_track([])
 
-            self.assertEqual(calls, [
-                "Linkin Park - Imaginary Song",
-                "Linkin Park official audio",
-            ])
-            self.assertEqual((track["artist"], track["title"]), ("Linkin Park", "Numb"))
-            self.assertEqual(track["youtube_id"], "official")
-            self.assertGreaterEqual(track["match_score"], 0.8)
+            download.assert_not_called()
 
     def test_discovery_reuses_one_ai_plan_for_multiple_downloaded_tracks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -651,12 +779,12 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
                 "provider": "test-dj",
             }
             metadata = {
-                "Linkin Park - Numb": {
+                "numb-id": {
                     "id": "numb-id", "title": "Linkin Park - Numb (Official Video)",
                     "artist": "Linkin Park", "uploader": "Linkin Park",
                     "duration": 187,
                 },
-                "The Hardkiss - Журавлі": {
+                "zhuravli-id": {
                     "id": "zhuravli-id", "title": "The Hardkiss - Журавлі",
                     "artist": "The Hardkiss", "uploader": "The Hardkiss",
                     "duration": 226,
@@ -664,14 +792,32 @@ class LumenDownloaderIntegrationTests(unittest.TestCase):
             }
 
             def fake_download(item, output_dir, **kwargs):
-                info = {**metadata[item], "webpage_url": f"https://example.test/{metadata[item]['id']}"}
+                video_id = item.rsplit("=", 1)[-1]
+                info = {**metadata[video_id], "webpage_url": item}
+                self.assertFalse(kwargs["search"])
+                self.assertFalse(kwargs["music_search"])
                 self.assertTrue(kwargs["validator"](info))
-                path = Path(output_dir) / f"{metadata[item]['id']}.mp3"
+                path = Path(output_dir) / f"{video_id}.mp3"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"local-audio")
                 return {"path": path, "info": info}
 
+            def fake_google(artist, title, **_kwargs):
+                video_id = "numb-id" if artist == "Linkin Park" else "zhuravli-id"
+                return {
+                    "ok": True,
+                    "results": [{
+                        "id": video_id,
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
+                        "title": f"{artist} - {title}",
+                        "source": "google:playwright",
+                    }],
+                }
+
             with patch.object(api, "_queue_search_plan", return_value=plan) as search, patch.object(
+                api.music_research, "search_youtube_on_google",
+                side_effect=fake_google,
+            ), patch.object(
                 api, "_download_audio_with_lumen", side_effect=fake_download,
             ):
                 first = api._discover_queue_track([])

@@ -21,6 +21,10 @@ class SettingsPersistenceTests(unittest.TestCase):
                     "WHERE key IN ('web_research_enabled','browser_search_enabled')"
                 )
                 connection.execute(
+                    "UPDATE settings SET value='LUMEN RADIO' "
+                    "WHERE key='station_name'"
+                )
+                connection.execute(
                     "UPDATE tracks SET intro='Стара мокова підводка',"
                     "intro_speech='Стара мокова підводка',intro_style='template' "
                     "WHERE id=?",
@@ -32,6 +36,7 @@ class SettingsPersistenceTests(unittest.TestCase):
 
             self.assertEqual(migrated.settings()["web_research_enabled"], "1")
             self.assertEqual(migrated.settings()["browser_search_enabled"], "1")
+            self.assertEqual(migrated.settings()["station_name"], "Vector Radio")
             self.assertEqual(migrated.track(track_id)["intro"], "")
             self.assertEqual(migrated.track(track_id)["intro_speech"], "")
 
@@ -76,6 +81,19 @@ class SettingsPersistenceTests(unittest.TestCase):
         self.assertNotIn('data-setting="web_research_enabled"', markup)
         self.assertNotIn('data-setting="browser_search_enabled"', markup)
         self.assertIn("Автоматичні web-підводки активні", index)
+
+    def test_database_api_cannot_disable_automatic_web_research(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "radio.db")
+
+            database.save_settings({
+                "web_research_enabled": "0",
+                "browser_search_enabled": "0",
+            })
+
+            settings = database.settings()
+            self.assertEqual(settings["web_research_enabled"], "1")
+            self.assertEqual(settings["browser_search_enabled"], "1")
 
 
 if __name__ == "__main__":

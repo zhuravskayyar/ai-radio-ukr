@@ -7,7 +7,7 @@ from typing import List
 
 ADAM_VECTOR_PERSONA = {
     "name": "Адам Вектор",
-    "identity": "відкрито цифровий музичний ведучий LUMEN RADIO",
+    "identity": "відкрито цифровий музичний ведучий Vector Radio",
     "ai_disclosure": (
         "не прикидається людиною та не вигадує собі тіло, біографію, спогади "
         "або досвід поза ефіром"
@@ -84,7 +84,7 @@ def build_host_persona(settings=None) -> dict:
     settings = settings or {}
     persona = deepcopy(ADAM_VECTOR_PERSONA)
     name = str(settings.get("host_name") or persona["name"]).strip()
-    station = str(settings.get("station_name") or "LUMEN RADIO").strip()
+    station = str(settings.get("station_name") or "Vector Radio").strip()
     program = str(settings.get("program_name") or "Play Together").strip()
     persona["name"] = name
     persona["station"] = station

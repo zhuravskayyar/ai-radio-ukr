@@ -3,6 +3,7 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -279,6 +280,182 @@ class RadioQueueTests(unittest.TestCase):
             ),
             "genre-conflict",
         )
+
+    def test_long_avoid_list_keeps_requested_rock_subgenres_available(self):
+        prompt = """Prioritize romantic, emotionally warm rock and alternative
+        pop-rock from approximately 2005–2018. Prefer alternative pop-rock,
+        emo-rock, soft pop-punk, melodic indie-rock and youthful festival-rock.
+        Avoid old Soviet rock aesthetics, classic Russian rock, bard rock,
+        chanson, retro estrada, post-punk, gloomy art-rock, overly depressive
+        indie, heavy metal and slow acoustic singer-songwriter tracks. The
+        result should sound like a 2000s–2010s alternative rock playlist."""
+
+        policy = RadioAPI._station_genre_policy(prompt)
+        self.assertIn("alternative_rock", policy["required"])
+        self.assertIn("pop_rock", policy["required"])
+        self.assertIn("emo_rock", policy["required"])
+        self.assertIn("pop_punk", policy["required"])
+        self.assertIn("indie_rock", policy["required"])
+        self.assertNotIn("rock", policy["forbidden"])
+        self.assertTrue({"chanson", "post_punk", "art_rock", "metal"}.issubset(
+            policy["forbidden"]
+        ))
+
+        for genre in (
+            "alternative rock", "alternative pop-rock", "emo-rock",
+            "soft pop-punk", "melodic indie-rock",
+        ):
+            self.assertEqual(
+                RadioAPI._recommendation_style_issue(prompt, genre), "",
+                genre,
+            )
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue(prompt, "post-punk"),
+            "genre-conflict",
+        )
+        self.assertEqual(
+            RadioAPI._recommendation_style_issue(prompt, "russian chanson"),
+            "genre-conflict",
+        )
+
+    def test_romantic_evening_scoring_rewards_seeds_and_rejects_old_or_blocked_artists(self):
+        seed = RadioAPI._romantic_evening_suitability({
+            "artist": "Нервы",
+            "title": "Слишком влюблён",
+            "year": 2012,
+            "artistBreakthroughYear": 2010,
+            "genre": "emo-rock",
+            "mood": ["romantic", "youthful"],
+            "popularityScore": 90,
+        })
+        old_rock = RadioAPI._romantic_evening_suitability({
+            "artist": "Old Artist",
+            "title": "Old Love Song",
+            "year": 1989,
+            "artistBreakthroughYear": 1985,
+            "genre": "alternative rock",
+            "mood": ["romantic"],
+            "popularityScore": 95,
+        })
+        blocked = RadioAPI._romantic_evening_suitability({
+            "artist": "Земфира",
+            "title": "Хочешь?",
+            "year": 2000,
+            "artistBreakthroughYear": 1999,
+            "genre": "alternative rock",
+            "mood": ["romantic"],
+            "popularityScore": 100,
+        })
+
+        self.assertGreaterEqual(seed["score"], 95)
+        self.assertLess(old_rock["score"], 72)
+        self.assertEqual(blocked["score"], 0)
+        self.assertTrue(blocked["blocked"])
+
+    def test_romantic_evening_plan_uses_seed_queries_and_local_threshold(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            response = {
+                "provider": "nvidia",
+                "candidate": json.dumps({
+                    "tracks": [
+                        {
+                            "artist": "Нервы", "title": "Слишком влюблён",
+                            "year": 2012, "artistBreakthroughYear": 2010,
+                            "genre": "emo-rock", "mood": ["romantic", "youthful"],
+                            "popularityScore": 90, "retrievalClass": "seed",
+                        },
+                        {
+                            "artist": "Modern Band", "title": "City Lights",
+                            "year": 2013, "artistBreakthroughYear": 2011,
+                            "genre": "melodic rock", "mood": ["warm", "evening"],
+                            "popularityScore": 80, "retrievalClass": "discovery",
+                        },
+                        {
+                            "artist": "Old Artist", "title": "Old Love Song",
+                            "year": 1989, "artistBreakthroughYear": 1985,
+                            "genre": "alternative rock", "mood": ["romantic"],
+                            "popularityScore": 95, "retrievalClass": "experimental",
+                        },
+                        {
+                            "artist": "Земфира", "title": "Хочешь?",
+                            "year": 2000, "artistBreakthroughYear": 1999,
+                            "genre": "alternative rock", "mood": ["romantic"],
+                            "popularityScore": 100, "retrievalClass": "seed",
+                        },
+                    ],
+                    "similarTracks": [],
+                    "targetMood": ["romantic", "evening"],
+                }, ensure_ascii=False),
+                "error": "",
+            }
+            requests = []
+
+            def fake_completion(_spec, _system, request, *_args):
+                requests.append(json.loads(request))
+                return response
+
+            provider = {
+                "name": "nvidia", "provider_type": "nvidia",
+                "url": "x", "key": "x", "model": "test",
+            }
+            with patch.object(api, "_provider_chat_completion", side_effect=fake_completion):
+                plan = api._queue_search_plan(
+                    {"station_prompt": "Romantic Evening"}, providers=[provider],
+                )
+
+            self.assertEqual(
+                [(item["artist"], item["title"]) for item in plan["tracks"]],
+                [
+                    ("Нервы", "Слишком влюблён"),
+                    ("Modern Band", "City Lights"),
+                ],
+            )
+            self.assertTrue(all(
+                item["suitability_score"] >= 72 for item in plan["tracks"]
+            ))
+            self.assertEqual(len(requests[0]["retrievalQueries"]), 8)
+            self.assertEqual(
+                requests[0]["selectionProfile"]["retrievalMix"],
+                {"seed": 70, "discovery": 20, "experimental": 10},
+            )
+
+    def test_romantic_evening_plan_cache_keeps_one_track_per_artist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = RadioAPI(Path(directory))
+            plan = {
+                "tracks": [
+                    {"artist": "Нервы", "title": "Кофе мой друг"},
+                    {"artist": "Нервы", "title": "Слишком влюблён"},
+                    {"artist": "Бумбокс", "title": "Та4то"},
+                ],
+                "similar_tracks": [], "backup_tracks": [],
+            }
+            with patch.object(api, "_queue_search_plan", return_value=plan):
+                api._refill_discovery_plan_cache(
+                    {"station_prompt": "Romantic Evening"}, [],
+                )
+
+            self.assertEqual(
+                [item["artist"] for item in api._discovery_plan_pool],
+                ["Нервы", "Бумбокс"],
+            )
+
+    def test_radio_history_supports_seven_day_track_cooldown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "radio.db")
+            track = db.add_local_track("Artist", "Recent Track", "")
+            now = datetime.now(timezone.utc)
+            db.add_radio_history(track, (now - timedelta(days=2)).isoformat())
+            old = db.add_local_track("Artist 2", "Old Track", "")
+            db.add_radio_history(old, (now - timedelta(days=9)).isoformat())
+
+            weekly = db.radio_history_since((now - timedelta(days=7)).isoformat())
+
+            self.assertEqual(
+                [(item["artist"], item["title"]) for item in weekly],
+                [("Artist", "Recent Track")],
+            )
 
     def test_modern_ru_ua_alt_rock_plan_filters_legacy_and_adjacent_artists(self):
         with tempfile.TemporaryDirectory() as directory:
