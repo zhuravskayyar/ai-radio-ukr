@@ -1,4 +1,4 @@
-"""Local Ukrainian StyleTTS2 synthesis used by LUMEN Radio.
+"""Local Ukrainian StyleTTS2 synthesis used by Vector Radio.
 
 The model is loaded lazily and kept in memory.  Text follows the reference
 Ukrainian StyleTTS2 pipeline: stressification, IPA conversion, tokenization,

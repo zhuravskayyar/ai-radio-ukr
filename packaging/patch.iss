@@ -1,5 +1,5 @@
 #define AppName "Vector Radio Patch"
-#define AppVersion "1.0.0.9"
+#define AppVersion "1.0.0.12"
 
 [Setup]
 AppId={{A71517CA-8A77-4CB4-9D40-AD99D801945B}
@@ -39,7 +39,7 @@ Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc
 Source: "..\ui\*"; DestDir: "{app}\ui"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\data\tts_pronunciations.json"; DestDir: "{app}\data"; Flags: ignoreversion
 Source: "..\scripts\migrate_local_library.py"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "..\docs\PATCH_1.0.0.9.md"; DestDir: "{app}"; DestName: "PATCH_1.0.0.9.md"; Flags: ignoreversion
+Source: "..\docs\PATCH_1.0.0.12.md"; DestDir: "{app}"; DestName: "PATCH_1.0.0.12.md"; Flags: ignoreversion
 
 [Run]
 Filename: "{app}\runtime\python.exe"; Parameters: """{app}\tools\migrate_local_library.py"" ""{userdesktop}\localRadio"" ""{app}"""; WorkingDir: "{app}"; StatusMsg: "Перенесення наявної локальної бібліотеки..."; Flags: runhidden waituntilterminated; Check: LegacyLibraryExists

@@ -3,7 +3,7 @@ edge-tts>=7.2
 mutagen>=1.47
 cmudict>=1.1,<2
 pronouncing>=0.2,<1
-yt-dlp[default,deno]>=2026.7.4
+yt-dlp[default,deno]>=2026.8.19
 # Optional JS-page fallback for bounded web research. Vector Radio tries the
 # locally installed Edge/Chrome first, so a separate browser download is optional.
 playwright>=1.52,<2

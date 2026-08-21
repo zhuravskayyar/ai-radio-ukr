@@ -333,7 +333,7 @@ class ContextEngine:
             "clock": clock,
             "weather": weather,
             "station": {
-                "name": settings.get("station_name", "LUMEN RADIO"),
+                "name": settings.get("station_name", "Vector Radio"),
                 "city": city,
                 "city_locative": CITY_LOCATIVE.get(city, f"місті {city}"),
             },

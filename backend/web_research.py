@@ -35,6 +35,9 @@ BLOCKED_RESULT_TERMS = (
 BLOCKED_LYRICS_HOSTS = (
     "azlyrics.com", "genius.com", "lyrics.com", "musixmatch.com",
 )
+YOUTUBE_VIDEO_HOSTS = (
+    "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com",
+)
 
 
 class ResearchToolError(ValueError):
@@ -606,6 +609,79 @@ class MusicResearchTools:
             "results": results,
             "attempts": attempts,
             "browser_used": source.endswith(":playwright"),
+        }
+
+    @staticmethod
+    def youtube_video_id(value):
+        """Return a canonical YouTube video id from a real video URL."""
+        raw = html.unescape(str(value or "").strip())
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+        except ValueError:
+            return ""
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        video_id = ""
+        if host == "youtu.be":
+            video_id = parsed.path.strip("/").split("/", 1)[0]
+        elif host in YOUTUBE_VIDEO_HOSTS:
+            if parsed.path.rstrip("/") == "/watch":
+                video_id = urllib.parse.parse_qs(parsed.query).get("v", [""])[0]
+            elif parsed.path.startswith("/embed/"):
+                video_id = parsed.path.split("/", 3)[2]
+        video_id = str(video_id or "").strip()
+        return video_id if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", video_id) else ""
+
+    def search_youtube_on_google(self, artist, title, *, limit=5, allow_browser=True):
+        """Resolve an exact playlist entry to ranked YouTube links via Google.
+
+        This method never downloads media and never lets an AI invent a URL.
+        Google (with the bounded Bing fallback already used by search_web) only
+        supplies candidate links; yt-dlp metadata validation remains mandatory
+        before the downloader writes an audio file.
+        """
+        artist = self._bounded_text(artist, "artist")
+        title = self._bounded_text(title, "title")
+        limit = max(1, min(10, self._bounded_limit(limit, default=5)))
+        query = (
+            f'site:youtube.com/watch "{artist[:80]}" "{title[:100]}" '
+            "official audio"
+        )
+        web_result = self.search_web(
+            query[:MAX_QUERY_CHARS], limit=min(10, limit * 2),
+            allow_browser=allow_browser,
+        )
+        candidates = []
+        seen = set()
+        for item in web_result.get("results", []):
+            video_id = self.youtube_video_id(item.get("url"))
+            label = self._clean_result_title(item.get("title"))
+            if not video_id or video_id in seen or not self._is_usable_music_result(item):
+                continue
+            seen.add(video_id)
+            artist_score = self._match_ratio(artist, label)
+            title_score = self._match_ratio(title, label)
+            candidates.append({
+                "id": video_id,
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "title": label,
+                "source": str(item.get("source") or "google:web"),
+                "resolver_score": round(artist_score * 0.45 + title_score * 0.55, 4),
+            })
+        candidates.sort(
+            key=lambda item: float(item.get("resolver_score") or 0), reverse=True,
+        )
+        candidates = candidates[:limit]
+        return {
+            "ok": bool(candidates),
+            "tool": "search_youtube_on_google",
+            "artist": artist,
+            "title": title,
+            "query": query[:MAX_QUERY_CHARS],
+            "source": str(candidates[0].get("source") or "") if candidates else "",
+            "results": candidates,
+            "attempts": list(web_result.get("attempts") or []),
+            "browser_used": bool(web_result.get("browser_used")),
+            "error": str(web_result.get("error") or "") if not candidates else "",
         }
 
     def _json_request(self, url, *, headers=None):

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vector Radio</title><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"><link rel="stylesheet" href="vector.css?v=auto"></head>
+<title>Vector Radio</title><link rel="icon" href="assets/vector-radio-logo.png"><link rel="stylesheet" href="style.css?v=auto"><link rel="stylesheet" href="library.css?v=auto"><link rel="stylesheet" href="radio-copy.css?v=auto"><link rel="stylesheet" href="vector.css?v=auto"><link rel="stylesheet" href="boombox.css?v=auto"></head>
 <body class="vector-ui">
 <div class="app">
   <header class="topbar">
@@ -33,6 +33,97 @@
 
     <main class="content">
       <section id="onair" class="page active">
+        <section class="boombox-shell" id="boomboxInterface" aria-label="Інтерфейс магнітоли">
+          <div class="boombox-cabinet" id="boomboxPlayer">
+            <div class="boombox-brandline">
+              <span class="boombox-wordmark">VECTOR <b>STEREO</b></span>
+              <span class="boombox-model">DIGITAL SYNTHESIZER · XR-1047</span>
+              <time id="boomboxClock">--:--</time>
+            </div>
+
+            <div class="boombox-face">
+              <aside class="boombox-power-strip" aria-label="Живлення">
+                <span class="boombox-label">POWER</span>
+                <button id="boomboxPower" class="boombox-power" type="button" aria-label="Увімкнути або призупинити ефір" aria-pressed="false"><i></i></button>
+                <span class="boombox-label phones-label">PHONES</span>
+                <span class="boombox-jack" aria-hidden="true"></span>
+                <span class="boombox-channel">L — ◉ — R</span>
+              </aside>
+
+              <section class="cassette-deck" aria-label="Касетна дека">
+                <div class="cassette-window">
+                  <div class="cassette-tape" id="boomboxCassette">
+                    <div class="cassette-label">
+                      <span class="cassette-side" id="boomboxCassetteSide">A</span>
+                      <span class="cassette-cover-art" id="boomboxCassetteCover" aria-hidden="true"><img id="boomboxCassetteCoverImage" alt="" referrerpolicy="no-referrer"><i id="boomboxCassetteCoverFallback">VR</i></span>
+                      <span class="cassette-title" id="boomboxCassetteTitle">VECTOR RADIO</span>
+                    </div>
+                    <div class="cassette-reels" aria-hidden="true">
+                      <span class="cassette-reel left"><i></i></span>
+                      <span class="cassette-tape-path"></span>
+                      <span class="cassette-reel right"><i></i></span>
+                    </div>
+                    <div class="cassette-meta"><span class="cassette-artist" id="boomboxCassetteArtist">LOCAL BROADCAST</span><span id="boomboxTapeCounter">TRACK 01</span></div>
+                  </div>
+                </div>
+                <div class="deck-caption"><b>STEREO CASSETTE DECK</b><span>SOFT TOUCH MECHANISM / FULL AUTO STOP</span></div>
+              </section>
+
+              <section class="tuner-section" aria-label="Цифровий тюнер">
+                <div class="tuner-display">
+                  <div class="tuner-topline"><span><i class="stereo-led" id="boomboxStereoLed"></i> FM STEREO</span><span id="boomboxSourceLabel">RADIO</span></div>
+                  <div class="tuner-readout sixteen-segment-panel">
+                    <span class="fm-mark" id="boomboxBandLabel">FM</span>
+                    <div class="sixteen-segment-frequency" id="boomboxFrequency" role="img" aria-label="104.7"></div>
+                    <span class="mhz" id="boomboxFrequencyUnit">MHz</span>
+                    <div class="signal-meter" aria-label="Рівень сигналу">
+                      <small>SIGNAL</small>
+                      <span><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    </div>
+                  </div>
+                  <div class="tuner-now-playing">
+                    <span class="play-indicator" id="boomboxPlayIndicator" aria-hidden="true">▶</span>
+                    <div class="sixteen-segment-marquee-wrap">
+                      <div class="sixteen-segment-marquee" id="boomboxSegmentMarquee" role="img" aria-label="Оберіть трек — Ваша бібліотека готова"></div>
+                      <span class="segment-copy-accessible" aria-live="polite"><b id="boomboxTitle">Оберіть трек</b><small id="boomboxArtist">Ваша бібліотека готова</small></span>
+                    </div>
+                    <time><span id="boomboxElapsed">0:00</span> / <span id="boomboxDuration">LIVE</span></time>
+                  </div>
+                  <div class="boombox-progress" aria-label="Прогрес треку"><i id="boomboxProgressBar"></i></div>
+                  <div class="boombox-equalizer" aria-hidden="true">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                </div>
+                <div class="preset-row" id="boomboxPresets" aria-label="Пресети станцій"></div>
+              </section>
+
+              <aside class="boombox-knob-strip">
+                <span class="boombox-label">TUNING</span>
+                <button id="boomboxTune" class="boombox-knob tuning-knob" type="button" aria-label="Налаштування частоти: клік, перетягування або колесо миші" aria-valuetext="104.7 MHz"><i></i></button>
+                <span class="boombox-label volume-caption">VOLUME</span>
+                <label class="boombox-volume-wrap" aria-label="Гучність">
+                  <span id="boomboxVolumeKnob" class="boombox-knob volume-knob"><i></i></span>
+                  <input id="boomboxVolume" type="range" min="0" max="100" value="75" aria-label="Гучність магнітоли">
+                </label>
+                <span class="knob-scale"><i>MIN</i><i>MAX</i></span>
+                <output id="boomboxVolumeValue" class="knob-value" for="boomboxVolume">75%</output>
+              </aside>
+            </div>
+
+            <div class="boombox-transport" aria-label="Керування відтворенням">
+              <button id="boomboxPrev" type="button"><small>REW</small><b>◀◀</b></button>
+              <button id="boomboxPlay" type="button" aria-pressed="false"><small>PLAY</small><b>▶</b></button>
+              <button id="boomboxStop" type="button"><small>STOP</small><b>■</b></button>
+              <button id="boomboxNext" type="button"><small>FF</small><b>▶▶</b></button>
+              <button id="boomboxEject" type="button"><small>EJECT</small><b>⏏</b></button>
+              <button class="boombox-source active" type="button" data-boombox-source="radio"><small>SOURCE</small><b>RADIO</b></button>
+              <button class="boombox-source" type="button" data-boombox-source="tape"><small>SOURCE</small><b>TAPE</b></button>
+              <button class="boombox-source" type="button" data-boombox-source="bluetooth"><small>SOURCE</small><b>BT</b></button>
+            </div>
+          </div>
+          <p class="boombox-statusline"><span><i id="boomboxSignalLed"></i> LOCAL SIGNAL</span><span id="boomboxSystemStatus">CSS HI-FI SYSTEM · AUDIO LOGIC CONNECTED</span></p>
+        </section>
+
         <div class="hero">
           <div class="hero-main">
             <img class="vector-logo" src="assets/vector-radio-logo.png" alt="Vector Radio">
@@ -164,6 +255,22 @@
         </div>
         <div class="settingsGrid">
           <article class="simple-settings-card">
+            <h3>Інтерфейс</h3>
+            <p class="hint theme-intro">Оберіть оболонку плеєра. Радіоефір, черга та налаштування залишаються тими самими.</p>
+            <div class="theme-options" role="group" aria-label="Стиль інтерфейсу">
+              <button class="theme-choice" type="button" data-theme-choice="vector" aria-pressed="true">
+                <span class="theme-preview vector-preview" aria-hidden="true"><i></i><b>▶</b><i></i></span>
+                <strong>Vector</strong>
+                <small>Сучасний мінімалізм</small>
+              </button>
+              <button class="theme-choice" type="button" data-theme-choice="boombox" aria-pressed="false">
+                <span class="theme-preview boombox-preview" aria-hidden="true"><i></i><b>104.7</b><i></i></span>
+                <strong>Магнітола</strong>
+                <small>Касета, тюнер і фізичні кнопки</small>
+              </button>
+            </div>
+            <input id="uiThemeSetting" data-setting="ui_theme" value="vector" type="hidden">
+
             <h3>API-ключі</h3>
             <p class="hint">Вставте вміст TXT або виберіть файл. Потрібен хоча б один ключ: NVIDIA чи OpenRouter.</p>
             <textarea id="apiTextInput" rows="5" spellcheck="false" placeholder="NVIDIA_API_KEY=nvapi-...&#10;OPENROUTER_API_KEY=sk-or-v1-..."></textarea>

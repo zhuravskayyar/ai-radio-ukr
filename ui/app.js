@@ -44,14 +44,156 @@ const state = {
   silenceWarnings: 0,
   silenceFallbacks: 0,
   watchdogState: 'armed',
+  boomboxSource: 'radio',
+  pendingTrackEndTrackId: null,
 };
 
 let booted = false;
 let bootAttempts = 0;
 let bootRetryTimer = null;
+let boomboxTrackTimer = null;
+let boomboxLoadedTimer = null;
+let boomboxEqualizerFrame = null;
+let boomboxAudioContext = null;
+let boomboxAnalyser = null;
+let boomboxAudioSource = null;
+let boomboxFrequencyData = null;
+let boomboxMarqueeText = '';
+let boomboxMarqueeOffset = 0;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+const SIXTEEN_SEGMENTS = [
+  'a1', 'a2', 'b', 'c', 'd1', 'd2', 'e', 'f',
+  'g1', 'g2', 'h', 'i', 'j', 'k', 'l', 'm',
+];
+
+const SIXTEEN_SEGMENT_GLYPHS = {
+  '0': 'a1 a2 b c d1 d2 e f',
+  '1': 'b c',
+  '2': 'a1 a2 b g1 g2 e d1 d2',
+  '3': 'a1 a2 b g1 g2 c d1 d2',
+  '4': 'f g1 g2 b c',
+  '5': 'a1 a2 f g1 g2 c d1 d2',
+  '6': 'a1 a2 f g1 g2 e c d1 d2',
+  '7': 'a1 a2 b c',
+  '8': 'a1 a2 b c d1 d2 e f g1 g2',
+  '9': 'a1 a2 b c d1 d2 f g1 g2',
+  A: 'a1 a2 b c e f g1 g2', B: 'a1 a2 b c d1 d2 e f g1 g2',
+  C: 'a1 a2 d1 d2 e f', D: 'a1 a2 b c d1 d2 e f',
+  E: 'a1 a2 d1 d2 e f g1 g2', F: 'a1 a2 e f g1 g2',
+  G: 'a1 a2 c d1 d2 e f g2', H: 'b c e f g1 g2',
+  I: 'a1 a2 d1 d2 i l', J: 'b c d1 d2 e',
+  K: 'e f g1 h k m', L: 'd1 d2 e f', M: 'b c e f h j',
+  N: 'b c e f h k', O: 'a1 a2 b c d1 d2 e f',
+  P: 'a1 a2 b e f g1 g2', Q: 'a1 a2 b c d1 d2 e f k',
+  R: 'a1 a2 b e f g1 g2 k', S: 'a1 a2 c d1 d2 f g1 g2',
+  T: 'a1 a2 i l', U: 'b c d1 d2 e f', V: 'e f k m',
+  W: 'b c e f k m', X: 'h j k m', Y: 'h j l',
+  Z: 'a1 a2 d1 d2 j m',
+  '-': 'g1 g2', '_': 'd1 d2', '=': 'g1 g2 d1 d2',
+  '.': 'd2', ':': 'i l', '/': 'j m', '\\': 'h k',
+  '(': 'j k', ')': 'h m', '[': 'a1 d1 e f', ']': 'a2 b c d2',
+  '?': 'a1 a2 b g2 l', '!': 'i l', "'": 'i', ' ': '',
+};
+
+const CYRILLIC_SEGMENT_ALIASES = {
+  А: 'A', Б: '6', В: 'B', Г: 'F', Д: 'A', Е: 'E', Є: 'E', Ж: 'X',
+  З: '3', И: 'N', І: 'I', Ї: 'I', Й: 'N', К: 'K', Л: 'N', М: 'M',
+  Н: 'H', О: 'O', П: 'H', Р: 'P', С: 'C', Т: 'T', У: 'Y', Ф: 'O',
+  Х: 'X', Ц: 'U', Ч: 'h', Ш: 'W', Щ: 'W', Ь: 'b', Ю: 'U', Я: 'R',
+};
+
+function sixteenSegmentGlyph(character) {
+  const upper = String(character || ' ').toLocaleUpperCase('uk-UA');
+  const alias = CYRILLIC_SEGMENT_ALIASES[upper] || upper;
+  const glyph = SIXTEEN_SEGMENT_GLYPHS[alias]
+    || SIXTEEN_SEGMENT_GLYPHS[alias.toLocaleUpperCase('en-US')]
+    || '';
+  return new Set(glyph.split(' ').filter(Boolean));
+}
+
+function ensureSixteenSegmentCells(root, count) {
+  if (!root) return [];
+  const safeCount = Math.max(1, Number(count) || 1);
+  if (root.children.length !== safeCount) {
+    root.replaceChildren(...Array.from({length: safeCount}, () => {
+      const cell = document.createElement('span');
+      cell.className = 'sixteen-segment-character';
+      cell.setAttribute('aria-hidden', 'true');
+      SIXTEEN_SEGMENTS.forEach(name => {
+        const segment = document.createElement('i');
+        segment.className = `sixteen-segment sixteen-segment-${name}`;
+        cell.appendChild(segment);
+      });
+      return cell;
+    }));
+  }
+  root.style.setProperty('--segment-count', String(safeCount));
+  return [...root.children];
+}
+
+function renderSixteenSegmentText(root, text, count = String(text || '').length || 1) {
+  if (!root) return;
+  const value = String(text || '');
+  const cells = ensureSixteenSegmentCells(root, count);
+  cells.forEach((cell, index) => {
+    const character = value[index] || ' ';
+    const glyph = sixteenSegmentGlyph(character);
+    cell.dataset.character = character;
+    [...cell.children].forEach((segment, segmentIndex) => {
+      segment.classList.toggle('is-on', glyph.has(SIXTEEN_SEGMENTS[segmentIndex]));
+    });
+  });
+}
+
+function segmentMarqueeCapacity() {
+  const root = $('#boomboxSegmentMarquee');
+  const width = root?.clientWidth || 360;
+  return Math.max(10, Math.min(22, Math.floor(width / 22)));
+}
+
+function renderBoomboxMarqueeFrame() {
+  const root = $('#boomboxSegmentMarquee');
+  if (!root) return;
+  const capacity = segmentMarqueeCapacity();
+  const gap = '     ';
+  const cycle = `${boomboxMarqueeText}${gap}`;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const source = cycle.length > capacity && !reducedMotion
+    ? cycle + cycle
+    : boomboxMarqueeText.padEnd(capacity, ' ');
+  const offset = cycle.length > capacity && !reducedMotion
+    ? boomboxMarqueeOffset % cycle.length
+    : 0;
+  renderSixteenSegmentText(root, source.slice(offset, offset + capacity), capacity);
+}
+
+function setBoomboxMarquee(track) {
+  const artist = String(track?.artist || 'Ваша бібліотека готова').trim();
+  const title = String(track?.title || 'Оберіть трек').trim();
+  const next = `${artist} - ${title}`.toLocaleUpperCase('uk-UA');
+  const root = $('#boomboxSegmentMarquee');
+  if (next !== boomboxMarqueeText) {
+    boomboxMarqueeText = next;
+    boomboxMarqueeOffset = 0;
+  }
+  if (root) {
+    root.setAttribute('aria-label', `${artist} — ${title}`);
+    root.title = `${artist} — ${title}`;
+  }
+  renderBoomboxMarqueeFrame();
+}
+
+function advanceBoomboxMarquee() {
+  const capacity = segmentMarqueeCapacity();
+  if (boomboxMarqueeText.length > capacity
+      && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    boomboxMarqueeOffset = (boomboxMarqueeOffset + 1) % (boomboxMarqueeText.length + 5);
+  }
+  renderBoomboxMarqueeFrame();
+}
 
 function settingNumber(key, fallback) {
   const value = Number(state.settings[key]);
@@ -73,6 +215,488 @@ function toast(message) {
   setTimeout(() => element.classList.remove('show'), 3000);
 }
 
+const UI_THEME_STORAGE_KEY = 'vector-radio-ui-theme';
+
+function normalizeUiTheme(theme) {
+  return theme === 'boombox' ? 'boombox' : 'vector';
+}
+
+function storedUiTheme() {
+  try {
+    return normalizeUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+  } catch (_error) {
+    return 'vector';
+  }
+}
+
+function renderThemeChoices(theme) {
+  $$('[data-theme-choice]').forEach(button => {
+    const selected = button.dataset.themeChoice === theme;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+}
+
+function applyUiTheme(theme, remember = true) {
+  const normalized = normalizeUiTheme(theme);
+  document.body.dataset.uiTheme = normalized;
+  const setting = $('#uiThemeSetting');
+  if (setting) setting.value = normalized;
+  state.settings.ui_theme = normalized;
+  renderThemeChoices(normalized);
+  if (remember) {
+    try {
+      localStorage.setItem(UI_THEME_STORAGE_KEY, normalized);
+    } catch (_error) {
+      // The desktop WebView normally provides localStorage. The database copy
+      // remains authoritative if a restricted browser context disables it.
+    }
+  }
+  return normalized;
+}
+
+async function persistUiTheme(theme) {
+  const api = window.pywebview?.api;
+  if (typeof api?.save_settings !== 'function') return;
+  try {
+    const result = await api.save_settings({ui_theme: theme});
+    if (result?.ok) state.settings.ui_theme = normalizeUiTheme(result.settings?.ui_theme || theme);
+  } catch (error) {
+    console.warn('UI theme persistence failed', error);
+  }
+}
+
+function bindThemeControls() {
+  $$('[data-theme-choice]').forEach(button => {
+    button.onclick = () => {
+      const theme = applyUiTheme(button.dataset.themeChoice);
+      syncSettingControls('ui_theme', theme, $('#uiThemeSetting'));
+      void persistUiTheme(theme);
+      toast(theme === 'boombox' ? 'Інтерфейс «Магнітола» увімкнено' : 'Інтерфейс Vector увімкнено');
+    };
+  });
+}
+
+function formatPlaybackTime(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, '0')}`;
+}
+
+function connectBoomboxAnalyser(audio) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext || !audio) return false;
+  try {
+    if (!boomboxAudioContext) {
+      boomboxAudioContext = new AudioContext();
+      boomboxAnalyser = boomboxAudioContext.createAnalyser();
+      boomboxAnalyser.fftSize = 64;
+      boomboxAnalyser.smoothingTimeConstant = 0.78;
+      boomboxAnalyser.connect(boomboxAudioContext.destination);
+      boomboxFrequencyData = new Uint8Array(boomboxAnalyser.frequencyBinCount);
+    }
+    boomboxAudioSource = boomboxAudioContext.createMediaElementSource(audio);
+    boomboxAudioSource.connect(boomboxAnalyser);
+    return true;
+  } catch (error) {
+    console.warn('Web Audio visualizer is unavailable', error);
+    return false;
+  }
+}
+
+function stopBoomboxEqualizer() {
+  if (boomboxEqualizerFrame) cancelAnimationFrame(boomboxEqualizerFrame);
+  boomboxEqualizerFrame = null;
+  const player = $('#boomboxPlayer');
+  if (player) player.classList.remove('audio-reactive');
+  $$('.boombox-equalizer i').forEach(bar => {
+    bar.style.height = '';
+    bar.style.opacity = '';
+  });
+}
+
+function startBoomboxEqualizer() {
+  if (boomboxEqualizerFrame) return;
+  const bars = $$('.boombox-equalizer i');
+  if (!bars.length) return;
+  const player = $('#boomboxPlayer');
+  if (player) player.classList.add('audio-reactive');
+  if (boomboxAudioContext?.state === 'suspended') {
+    void boomboxAudioContext.resume().catch(() => {});
+  }
+  const renderFrame = () => {
+    if (!state.playing) {
+      stopBoomboxEqualizer();
+      return;
+    }
+    if (boomboxAnalyser && boomboxFrequencyData) {
+      boomboxAnalyser.getByteFrequencyData(boomboxFrequencyData);
+    }
+    const fallbackPhase = performance.now() / 170;
+    bars.forEach((bar, index) => {
+      const sampleIndex = boomboxFrequencyData
+        ? Math.min(boomboxFrequencyData.length - 1, Math.floor(index * boomboxFrequencyData.length / bars.length))
+        : -1;
+      const measured = sampleIndex >= 0 ? boomboxFrequencyData[sampleIndex] / 255 : 0;
+      const fallback = .22 + Math.abs(Math.sin(fallbackPhase + index * 1.37)) * .54;
+      const level = measured > .015 ? measured : fallback;
+      bar.style.height = `${Math.round(10 + level * 88)}%`;
+      bar.style.opacity = String(.46 + level * .54);
+    });
+    boomboxEqualizerFrame = requestAnimationFrame(renderFrame);
+  };
+  boomboxEqualizerFrame = requestAnimationFrame(renderFrame);
+}
+
+function syncPlaybackUi() {
+  const playing = !!state.playing;
+  const primaryPlay = $('#play');
+  if (primaryPlay) primaryPlay.textContent = playing ? 'Ⅱ' : '▶';
+  const boombox = $('#boomboxPlayer');
+  if (boombox) boombox.classList.toggle('is-playing', playing);
+  const indicator = $('#boomboxPlayIndicator');
+  if (indicator) indicator.textContent = playing ? '▶' : 'Ⅱ';
+  $('#boomboxStereoLed')?.classList.toggle('active', playing);
+  $('#boomboxSignalLed')?.classList.toggle('active', playing);
+  ['#boomboxPlay', '#boomboxPower'].forEach(selector => {
+    const control = $(selector);
+    if (!control) return;
+    control.classList.toggle('active', playing);
+    control.setAttribute('aria-pressed', playing ? 'true' : 'false');
+  });
+  if (playing) startBoomboxEqualizer();
+  else stopBoomboxEqualizer();
+  updateBoomboxSourceDisplay();
+}
+
+function syncVolumeControls(value) {
+  const volume = Math.max(0, Math.min(100, Number(value) || 0));
+  state.settings.program_volume = String(volume);
+  ['#volume', '#boomboxVolume'].forEach(selector => {
+    const input = $(selector);
+    if (input && Number(input.value) !== volume) input.value = String(volume);
+  });
+  const setting = $('[data-setting="program_volume"]');
+  if (setting && Number(setting.value) !== volume) setting.value = String(volume);
+  const knob = $('#boomboxVolumeKnob');
+  if (knob) knob.style.setProperty('--volume-angle', `${-135 + volume * 2.7}deg`);
+  const output = $('#boomboxVolumeValue');
+  if (output) output.textContent = `${Math.round(volume)}%`;
+  updateSettingOutput('program_volume', String(volume));
+}
+
+function frequencyForTrack(track, index = 0) {
+  const seed = Number(track?.id) || index + 1;
+  return (87.6 + ((seed * 17) % 203) / 10).toFixed(1);
+}
+
+function syncTuningKnob(frequency) {
+  const value = Math.max(87.6, Math.min(107.8, Number(frequency) || 104.7));
+  const angle = -135 + ((value - 87.6) / (107.8 - 87.6)) * 270;
+  const knob = $('#boomboxTune');
+  if (!knob) return;
+  knob.style.setProperty('--tune-angle', `${angle.toFixed(1)}deg`);
+  knob.setAttribute('aria-valuetext', `${value.toFixed(1)} MHz`);
+}
+
+function animateFrequency(value) {
+  const frequency = $('#boomboxFrequency');
+  const displayValue = String(value || '');
+  if (!frequency || frequency.dataset.segmentValue === displayValue) return;
+  frequency.dataset.segmentValue = displayValue;
+  frequency.setAttribute('aria-label', displayValue);
+  renderSixteenSegmentText(frequency, displayValue, Math.max(3, displayValue.length));
+  frequency.classList.remove('frequency-changing');
+  void frequency.offsetWidth;
+  frequency.classList.add('frequency-changing');
+}
+
+function updateBoomboxSourceDisplay(track = currentPlaybackTrack()) {
+  const source = state.boomboxSource || 'radio';
+  const player = $('#boomboxPlayer');
+  if (player) player.dataset.source = source;
+  const label = $('#boomboxSourceLabel');
+  const band = $('#boomboxBandLabel');
+  const unit = $('#boomboxFrequencyUnit');
+  const system = $('#boomboxSystemStatus');
+  if (source === 'tape') {
+    if (label) label.textContent = 'TAPE';
+    if (band) band.textContent = 'DECK';
+    animateFrequency(`${state.index % 2 ? 'B' : 'A'} ${String(state.index + 1).padStart(2, '0')}`);
+    if (unit) unit.textContent = state.playing ? 'PLAY' : 'READY';
+    if (system) system.textContent = 'CASSETTE DECK · LOCAL AUDIO';
+    return;
+  }
+  if (source === 'bluetooth') {
+    if (label) label.textContent = 'BLUETOOTH';
+    if (band) band.textContent = 'BT';
+    animateFrequency('READY');
+    if (unit) unit.textContent = state.playing ? 'STREAM' : 'LINK';
+    if (system) system.textContent = 'BLUETOOTH MODE · READY TO CONNECT';
+    return;
+  }
+  const frequency = frequencyForTrack(track, state.index);
+  if (label) label.textContent = 'RADIO';
+  if (band) band.textContent = 'FM';
+  animateFrequency(frequency);
+  if (unit) unit.textContent = 'MHz';
+  if (system) system.textContent = 'CSS HI-FI SYSTEM · AUDIO LOGIC CONNECTED';
+  syncTuningKnob(frequency);
+}
+
+function setBoomboxSource(source, announce = true) {
+  const normalized = ['radio', 'tape', 'bluetooth'].includes(source) ? source : 'radio';
+  state.boomboxSource = normalized;
+  $$('.boombox-source').forEach(button => {
+    const selected = button.dataset.boomboxSource === normalized;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+  updateBoomboxSourceDisplay();
+  if (announce) {
+    const names = {radio: 'FM Radio', tape: 'Cassette Tape', bluetooth: 'Bluetooth'};
+    toast(`Режим: ${names[normalized]}`);
+  }
+}
+
+function youtubeVideoIdForTrack(track) {
+  const exact = String(track?.youtube_id || '').trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(exact)) return exact;
+  const candidates = [
+    track?.youtube_url,
+    track?.source_url,
+    track?.resolved_url,
+    track?.local_path,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || '');
+    const youtubeMatch = value.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/i);
+    if (youtubeMatch) return youtubeMatch[1];
+    const filenameMatch = value.match(/\[([A-Za-z0-9_-]{11})\](?:\.[^.\\/]+)?$/);
+    if (filenameMatch) return filenameMatch[1];
+  }
+  return '';
+}
+
+function syncCassetteCover(track) {
+  const cover = $('#boomboxCassetteCover');
+  const image = $('#boomboxCassetteCoverImage');
+  const fallback = $('#boomboxCassetteCoverFallback');
+  if (!cover || !image || !fallback) return;
+  const artist = String(track?.artist || 'Vector').trim();
+  const title = String(track?.title || 'Radio').trim();
+  fallback.textContent = `${artist.charAt(0)}${title.charAt(0)}`.toUpperCase();
+  const videoId = youtubeVideoIdForTrack(track);
+  const remoteUrl = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '';
+  const localCover = String(track?.cover_path || '').trim();
+  const url = localCover ? localUrl(localCover) : remoteUrl;
+  const coverKey = localCover || remoteUrl || `fallback:${artist}:${title}`;
+  if (image.dataset.coverKey === coverKey) return;
+  image.dataset.coverKey = coverKey;
+  cover.classList.remove('has-art', 'loading');
+  image.onload = null;
+  image.onerror = null;
+  if (!url) {
+    image.removeAttribute('src');
+    return;
+  }
+  cover.classList.add('loading');
+  let fallbackUrl = localCover ? remoteUrl : '';
+  image.onload = () => {
+    if (image.dataset.coverKey !== coverKey) return;
+    cover.classList.remove('loading');
+    cover.classList.add('has-art');
+  };
+  image.onerror = () => {
+    if (image.dataset.coverKey !== coverKey) return;
+    if (fallbackUrl) {
+      const nextUrl = fallbackUrl;
+      fallbackUrl = '';
+      image.src = nextUrl;
+      return;
+    }
+    cover.classList.remove('loading', 'has-art');
+    image.removeAttribute('src');
+  };
+  image.src = url;
+}
+
+function syncBoomboxTrack(track) {
+  const title = track?.title || 'Оберіть трек';
+  const artist = track?.artist || 'Ваша бібліотека готова';
+  const titleNode = $('#boomboxTitle');
+  const artistNode = $('#boomboxArtist');
+  const cassetteTitle = $('#boomboxCassetteTitle');
+  const cassetteArtist = $('#boomboxCassetteArtist');
+  if (titleNode) titleNode.textContent = title;
+  if (artistNode) artistNode.textContent = artist;
+  setBoomboxMarquee(track);
+  const cassette = $('#boomboxCassette');
+  const key = track ? `${track.id || ''}:${track.youtube_id || ''}:${artist}:${title}` : 'empty';
+  const applyCassetteCopy = () => {
+    if (cassetteTitle) cassetteTitle.textContent = title;
+    if (cassetteArtist) cassetteArtist.textContent = artist;
+    const side = $('#boomboxCassetteSide');
+    if (side) side.textContent = state.index % 2 ? 'B' : 'A';
+    const counter = $('#boomboxTapeCounter');
+    if (counter) counter.textContent = `TRACK ${String(state.index + 1).padStart(2, '0')}`;
+    if (cassette) cassette.style.setProperty('--cassette-hue', String((state.index * 47 + Number(track?.id || 0) * 13) % 360));
+    syncCassetteCover(track);
+  };
+  if (cassette && cassette.dataset.trackKey && cassette.dataset.trackKey !== key) {
+    const player = $('#boomboxPlayer');
+    cassette.dataset.trackKey = key;
+    cassette.classList.remove('cassette-loaded');
+    cassette.classList.add('cassette-changing');
+    player?.classList.add('cassette-swapping');
+    clearTimeout(boomboxTrackTimer);
+    clearTimeout(boomboxLoadedTimer);
+    boomboxTrackTimer = setTimeout(() => {
+      applyCassetteCopy();
+      cassette.classList.remove('cassette-changing');
+      cassette.classList.add('cassette-loaded');
+      boomboxLoadedTimer = setTimeout(() => {
+        cassette.classList.remove('cassette-loaded');
+        player?.classList.remove('cassette-swapping');
+      }, 540);
+    }, 330);
+  } else if (!cassette?.dataset.trackKey) {
+    if (cassette) cassette.dataset.trackKey = key;
+    applyCassetteCopy();
+  }
+  updateBoomboxSourceDisplay(track);
+}
+
+function renderBoomboxPresets(upcoming = []) {
+  const root = $('#boomboxPresets');
+  if (!root) return;
+  const candidates = [state.index, ...upcoming]
+    .filter((index, position, values) => Number.isInteger(index) && values.indexOf(index) === position)
+    .slice(0, 5);
+  root.innerHTML = Array.from({length: 5}, (_value, preset) => {
+    const index = candidates[preset];
+    const track = state.tracks[index];
+    if (!track) return `<button type="button" disabled aria-label="Пресет ${preset + 1} порожній">${preset + 1}</button>`;
+    const active = index === state.index ? ' class="active"' : '';
+    const label = esc(`Пресет ${preset + 1}: ${track.artist} — ${track.title}`);
+    return `<button type="button"${active} aria-label="${label}" title="${label}" onclick="tune(${index})">${preset + 1}</button>`;
+  }).join('');
+}
+
+function updateBoomboxClock() {
+  const clock = $('#boomboxClock');
+  if (clock) clock.textContent = new Date().toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
+}
+
+function updatePlaybackProgress() {
+  const local = state.localAudio;
+  const current = local?.currentTime || 0;
+  const duration = local?.duration || 0;
+  const progress = duration && Number.isFinite(duration) ? current / duration * 100 : 0;
+  $('#elapsed').textContent = formatPlaybackTime(current);
+  $('#progress i').style.width = `${progress}%`;
+  const boomboxElapsed = $('#boomboxElapsed');
+  const boomboxDuration = $('#boomboxDuration');
+  const boomboxProgress = $('#boomboxProgressBar');
+  if (boomboxElapsed) boomboxElapsed.textContent = formatPlaybackTime(current);
+  if (boomboxDuration) boomboxDuration.textContent = duration && Number.isFinite(duration)
+    ? formatPlaybackTime(duration) : 'LIVE';
+  if (boomboxProgress) boomboxProgress.style.width = `${progress}%`;
+  updateBoomboxClock();
+}
+
+function bindBoomboxControls() {
+  const proxyClick = (selector, target) => {
+    const button = $(selector);
+    if (button) button.onclick = () => $(target)?.click();
+  };
+  proxyClick('#boomboxPrev', '#prev');
+  proxyClick('#boomboxPlay', '#play');
+  proxyClick('#boomboxPower', '#play');
+  proxyClick('#boomboxNext', '#next');
+
+  const stop = $('#boomboxStop');
+  if (stop) stop.onclick = () => pauseBroadcast();
+  const eject = $('#boomboxEject');
+  if (eject) eject.onclick = () => {
+    const player = $('#boomboxPlayer');
+    if (!player) return;
+    if (player.classList.contains('cassette-open')) {
+      player.classList.remove('cassette-open', 'cassette-ejecting');
+      return;
+    }
+    pauseBroadcast();
+    setBoomboxSource('tape', false);
+    player.classList.add('cassette-open', 'cassette-ejecting');
+    setTimeout(() => player.classList.remove('cassette-ejecting'), 590);
+  };
+  const volume = $('#boomboxVolume');
+  if (volume) volume.oninput = event => {
+    syncVolumeControls(event.target.value);
+    if (!state.ducked) setOutputVolume(event.target.value);
+  };
+  const volumeWrap = $('.boombox-volume-wrap');
+  if (volumeWrap) volumeWrap.onwheel = event => {
+    event.preventDefault();
+    const next = Math.max(0, Math.min(100, programVolume() + (event.deltaY < 0 ? 3 : -3)));
+    syncVolumeControls(next);
+    if (!state.ducked) setOutputVolume(next);
+  };
+
+  const tuneKnob = $('#boomboxTune');
+  let tuneDragY = null;
+  let tuneDragged = false;
+  let lastTuneAt = 0;
+  const stepTuner = direction => {
+    if (!state.tracks.length || Date.now() - lastTuneAt < 220) return;
+    lastTuneAt = Date.now();
+    setBoomboxSource('radio', false);
+    const index = direction > 0 ? nextPlayable(1) : sequentialNext(-1);
+    void tune(index);
+  };
+  if (tuneKnob) {
+    tuneKnob.onclick = () => {
+      if (tuneDragged) {
+        tuneDragged = false;
+        return;
+      }
+      stepTuner(1);
+    };
+    tuneKnob.onwheel = event => {
+      event.preventDefault();
+      stepTuner(event.deltaY < 0 ? 1 : -1);
+    };
+    tuneKnob.onpointerdown = event => {
+      tuneDragY = event.clientY;
+      tuneDragged = false;
+      tuneKnob.setPointerCapture?.(event.pointerId);
+    };
+    tuneKnob.onpointermove = event => {
+      if (tuneDragY === null) return;
+      const delta = tuneDragY - event.clientY;
+      if (Math.abs(delta) < 18) return;
+      tuneDragged = true;
+      tuneDragY = event.clientY;
+      stepTuner(delta > 0 ? 1 : -1);
+    };
+    const stopTuneDrag = () => { tuneDragY = null; };
+    tuneKnob.onpointerup = stopTuneDrag;
+    tuneKnob.onpointercancel = stopTuneDrag;
+  }
+  $$('.boombox-source').forEach(button => {
+    button.onclick = () => setBoomboxSource(button.dataset.boomboxSource);
+  });
+  setBoomboxSource('radio', false);
+}
+
+applyUiTheme(storedUiTheme(), false);
+bindThemeControls();
+bindBoomboxControls();
+renderBoomboxPresets();
+updatePlaybackProgress();
+setBoomboxMarquee(null);
+setInterval(advanceBoomboxMarquee, 340);
+window.addEventListener('resize', renderBoomboxMarqueeFrame);
+
 async function boot() {
   if (booted || !window.pywebview?.api) return;
   booted = true;
@@ -81,6 +705,7 @@ async function boot() {
     if (!data?.ok) throw new Error(data?.error || 'Backend не відповів');
     state.tracks = data.tracks;
     state.settings = data.settings;
+    applyUiTheme(state.settings.ui_theme || storedUiTheme());
     state.pilotClock = data.pilot_clock || null;
     state.broadcastSafety = data.broadcast_safety || null;
     state.updateStatus = data.update_status || null;
@@ -501,8 +1126,9 @@ function fillSettings() {
     });
     updateSettingOutput(key, value);
   });
+  applyUiTheme(state.settings.ui_theme || storedUiTheme());
   renderListenerProfile();
-  $('#volume').value = programVolume();
+  syncVolumeControls(programVolume());
   const stationTitle = $('#stationTitle');
   if (stationTitle) stationTitle.textContent = state.settings.station_name;
   const hostName = $('#hostName');
@@ -591,6 +1217,24 @@ function hasPlayable(track) {
     && !!track.local_path;
 }
 
+function trackById(trackId) {
+  if (trackId === null || trackId === undefined || trackId === '') return null;
+  return state.tracks.find(track => String(track.id) === String(trackId)) || null;
+}
+
+function currentPlaybackTrack() {
+  return (state.localAudio ? trackById(state.audioTrackId) : null)
+    || state.tracks[state.index]
+    || null;
+}
+
+function isCurrentAudio(audio, trackId, sequenceId = null) {
+  return !!audio
+    && state.localAudio === audio
+    && String(state.audioTrackId) === String(trackId)
+    && (sequenceId === null || state.sequenceId === sequenceId);
+}
+
 function playableIndices() {
   const local = state.tracks
     .map((track, index) => track.local_path && hasPlayable(track) ? index : -1)
@@ -654,12 +1298,23 @@ function applyRadioQueue(snapshot, selectCurrent = false) {
   return true;
 }
 
-async function rebuildRadioQueue(preferredIndex = state.index, selectCurrent = false) {
+async function rebuildRadioQueue(
+  preferredIndex = state.index,
+  selectCurrent = false,
+  expectedSequenceId = null,
+) {
   const api = window.pywebview?.api;
   const preferred = state.tracks[preferredIndex];
   if (!preferred || typeof api?.reseed_radio_queue !== 'function') return false;
   try {
     const snapshot = await api.reseed_radio_queue(preferred.id);
+    if (
+      expectedSequenceId !== null
+      && (
+        state.sequenceId !== expectedSequenceId
+        || String(state.tracks[state.index]?.id) !== String(preferred.id)
+      )
+    ) return false;
     return applyRadioQueue(snapshot, selectCurrent);
   } catch (error) {
     console.warn('Radio queue reseed failed', error);
@@ -793,7 +1448,8 @@ function takeScheduledNext() {
 }
 
 function syncNowPlayingDisplay() {
-  const track = state.tracks[state.index];
+  const track = currentPlaybackTrack();
+  syncBoomboxTrack(track);
   if (!track) return;
   $('#nowTitle').textContent = track.title;
   $('#nowArtist').textContent = track.artist;
@@ -803,6 +1459,7 @@ function syncNowPlayingDisplay() {
 function render() {
   syncNowPlayingDisplay();
   const indices = ensureUpcomingQueue().slice(0, 9);
+  renderBoomboxPresets(indices);
   const bufferStatus = $('#bufferStatus');
   if (bufferStatus && state.radioQueue) {
     bufferStatus.textContent = `${state.radioQueue.size}/${state.radioQueue.target}${state.radioQueue.refilling ? ' · REFILL' : ''}`;
@@ -1260,6 +1917,7 @@ function select(index, options = {}) {
   if (!state.tracks.length) return;
   state.sequenceId += 1;
   state.pendingTrackEnd = false;
+  state.pendingTrackEndTrackId = null;
   if (state.localAudio) {
     state.localAudio.pause();
     state.localAudio = null;
@@ -1279,14 +1937,12 @@ function select(index, options = {}) {
   state.index = (index + state.tracks.length) % state.tracks.length;
   const track = state.tracks[state.index];
   state.sessionPlayedTrackIds.add(track.id);
-  $('#nowTitle').textContent = track.title;
-  $('#nowArtist').textContent = track.artist;
-  $('#coverRank').textContent = 'LIVE';
+  syncNowPlayingDisplay();
   $('#intro').textContent = track.intro ? '«' + track.intro + '»' : 'Ефір по настрою: живий перехід до треку.';
   state.playing = false;
   state.ducked = false;
   state.currentOutputVolume = 0;
-  $('#play').textContent = '▶';
+  syncPlaybackUi();
   render();
 }
 
@@ -1554,6 +2210,7 @@ async function fadeOutputVolume(target, duration = 1400) {
 
 async function playAtVolume(volume) {
   const track = state.tracks[state.index];
+  const playbackSequenceId = state.sequenceId;
   if (!hasPlayable(track)) {
     toast('Трек ще не завантажений. Натисніть «Завантажити» у бібліотеці.');
     return false;
@@ -1562,32 +2219,54 @@ async function playAtVolume(volume) {
   if (track.local_path) {
     if (!state.localAudio || state.audioTrackId !== track.id || state.localAudio.ended) {
       if (state.localAudio) state.localAudio.pause();
-      state.localAudio = new Audio(localUrl(track.local_path));
+      const audio = new Audio(localUrl(track.local_path));
+      state.localAudio = audio;
       state.audioTrackId = track.id;
-      state.localAudio.onplay = () => {
+      connectBoomboxAnalyser(audio);
+      audio.onplay = () => {
+        if (!isCurrentAudio(audio, track.id)) {
+          audio.pause();
+          return;
+        }
         state.playing = true;
         state.autoplayBlocked = false;
+        const playbackIndex = state.tracks.findIndex(item => String(item.id) === String(track.id));
+        if (playbackIndex >= 0) state.index = playbackIndex;
         noteAudibleOutput('local_track');
-        $('#play').textContent = 'Ⅱ';
+        syncNowPlayingDisplay();
+        syncPlaybackUi();
       };
-      state.localAudio.ontimeupdate = () => maybeStartOutroVoice();
-      state.localAudio.onloadedmetadata = () => {
-        const measured = Math.round((state.localAudio.duration || 0) * 1000);
+      audio.ontimeupdate = () => {
+        if (isCurrentAudio(audio, track.id)) maybeStartOutroVoice();
+      };
+      audio.onloadedmetadata = () => {
+        if (!isCurrentAudio(audio, track.id)) return;
+        const measured = Math.round((audio.duration || 0) * 1000);
         if (measured > 0 && Math.abs((Number(track.duration_ms) || 0) - measured) > 1000) {
           track.duration_ms = measured;
           void window.pywebview.api.set_track_analysis(track.id, {duration_ms: measured});
         }
       };
-      state.localAudio.onended = () => handleTrackEnded();
-      state.localAudio.onerror = () => {
+      audio.onended = () => handleTrackEnded(track.id, audio);
+      audio.onerror = () => {
+        if (!isCurrentAudio(audio, track.id)) return;
         state.playing = false;
-        $('#play').textContent = '▶';
+        syncPlaybackUi();
         toast('Не вдалося відкрити локальний аудіофайл');
       };
     }
     setOutputVolume(volume);
     try {
-      await state.localAudio.play();
+      $('#boomboxPlayer')?.classList.remove('cassette-open', 'cassette-ejecting');
+      if (boomboxAudioContext?.state === 'suspended') {
+        await boomboxAudioContext.resume().catch(() => {});
+      }
+      const audio = state.localAudio;
+      await audio.play();
+      if (!isCurrentAudio(audio, track.id, playbackSequenceId)) {
+        audio.pause();
+        return false;
+      }
       return true;
     } catch (error) {
       state.autoplayBlocked = true;
@@ -1846,8 +2525,10 @@ async function beginCurrentTrack(
     if (token === state.sequenceId) {
       state.automationBusy = false;
       if (state.pendingTrackEnd) {
+        const endedTrackId = state.pendingTrackEndTrackId;
         state.pendingTrackEnd = false;
-        setTimeout(() => handleTrackEnded(), 0);
+        state.pendingTrackEndTrackId = null;
+        setTimeout(() => handleTrackEnded(endedTrackId), 0);
       }
     }
   }
@@ -1861,20 +2542,35 @@ async function startBroadcast() {
   await beginCurrentTrack(null, true, true);
 }
 
-async function handleTrackEnded() {
+async function handleTrackEnded(endedTrackId = state.audioTrackId, sourceAudio = null) {
+  if (
+    endedTrackId === null
+    || endedTrackId === undefined
+    || String(state.audioTrackId) !== String(endedTrackId)
+    || (sourceAudio && state.localAudio !== sourceAudio)
+  ) return;
   if (state.automationBusy) {
     state.pendingTrackEnd = true;
+    state.pendingTrackEndTrackId = endedTrackId;
     return;
   }
-  const current = state.tracks[state.index];
+  const endSequenceId = state.sequenceId;
+  const current = trackById(endedTrackId);
+  if (!current) return;
+  const currentIndex = state.tracks.findIndex(track => String(track.id) === String(current.id));
+  if (currentIndex >= 0) state.index = currentIndex;
   state.playing = false;
+  syncPlaybackUi();
   await reportListenerFeedback('complete');
+  if (state.sequenceId !== endSequenceId || String(state.audioTrackId) !== String(current.id)) return;
   await window.pywebview.api.mark_played(current.id);
+  if (state.sequenceId !== endSequenceId || String(state.audioTrackId) !== String(current.id)) return;
   current.play_count = (Number(current.play_count) || 0) + 1;
   let advancedSnapshot = null;
   if (typeof window.pywebview.api.advance_radio_queue === 'function') {
     try {
       advancedSnapshot = await window.pywebview.api.advance_radio_queue(current.id);
+      if (state.sequenceId !== endSequenceId || String(state.audioTrackId) !== String(current.id)) return;
       applyRadioQueue(advancedSnapshot, false);
     } catch (error) {
       console.warn('Radio queue advance failed', error);
@@ -1908,6 +2604,7 @@ async function handleTrackEnded() {
       nextTrack.id,
       Number(nextTrack.vocal_start_ms) || 0,
     );
+    if (state.sequenceId !== endSequenceId || String(state.audioTrackId) !== String(current.id)) return;
   }
   const preserveVoice = state.outroVoiceStarted
     && prepared?.transition_type === 'talk_over_outro';
@@ -1936,7 +2633,7 @@ async function handleTrackEnded() {
 
 async function reportListenerFeedback(action) {
   const api = window.pywebview?.api;
-  const track = state.tracks[state.index];
+  const track = currentPlaybackTrack();
   const audio = state.localAudio;
   if (
     typeof api?.record_listener_feedback !== 'function'
@@ -1964,10 +2661,19 @@ async function reportListenerFeedback(action) {
 }
 
 async function tune(index) {
-  const current = state.tracks[state.index];
-  if (state.playing) await reportListenerFeedback('skip');
-  select(index);
-  await rebuildRadioQueue(index, false);
+  if (!state.tracks.length) return;
+  const normalizedIndex = (index + state.tracks.length) % state.tracks.length;
+  const requestedTrack = state.tracks[normalizedIndex];
+  if (!requestedTrack) return;
+  const current = currentPlaybackTrack();
+  if (state.playing) void reportListenerFeedback('skip');
+  select(normalizedIndex);
+  const tuneSequenceId = state.sequenceId;
+  await rebuildRadioQueue(state.index, false, tuneSequenceId);
+  if (
+    state.sequenceId !== tuneSequenceId
+    || String(state.tracks[state.index]?.id) !== String(requestedTrack.id)
+  ) return;
   state.tracksSinceHost = 0;
   await beginCurrentTrack(current, true, false);
 }
@@ -1978,6 +2684,7 @@ function pauseBroadcast() {
   state.sequenceId += 1;
   state.manualPause = true;
   state.pendingTrackEnd = false;
+  state.pendingTrackEndTrackId = null;
   if (state.localAudio) state.localAudio.pause();
   else state.player?.pauseVideo();
   stopVoice();
@@ -1986,7 +2693,7 @@ function pauseBroadcast() {
   state.automationBusy = false;
   state.outroVoiceStarted = false;
   state.outroVoicePromise = null;
-  $('#play').textContent = '▶';
+  syncPlaybackUi();
 }
 
 $('#play').onclick = async () => {
@@ -2003,10 +2710,7 @@ $('#play').onclick = async () => {
 $('#prev').onclick = () => tune(sequentialNext(-1));
 $('#next').onclick = () => tune(nextPlayable(1));
 $('#volume').oninput = event => {
-  state.settings.program_volume = event.target.value;
-  const setting = $('[data-setting="program_volume"]');
-  if (setting) setting.value = event.target.value;
-  updateSettingOutput('program_volume', event.target.value);
+  syncVolumeControls(event.target.value);
   if (!state.ducked) setOutputVolume(event.target.value);
 };
 $('#shuffle').onclick = () => {
@@ -2246,7 +2950,11 @@ window.radioDiagnostics = () => ({
   tracks: state.tracks.length,
   localTracks: state.tracks.filter(hasPlayable).length,
   localPlaying: !!state.localAudio && !state.localAudio.paused,
-  currentTrackId: state.tracks[state.index]?.id || null,
+  currentTrackId: currentPlaybackTrack()?.id || null,
+  audioTrackId: state.audioTrackId || null,
+  displayTrackId: currentPlaybackTrack()?.id || null,
+  metadataInSync: !state.localAudio
+    || String(state.audioTrackId) === String(currentPlaybackTrack()?.id),
   currentOutputVolume: Math.round(state.currentOutputVolume),
   programVolume: programVolume(),
   introBedVolume: introBedVolume(),
@@ -2318,7 +3026,7 @@ $('#saveSettings').onclick = async () => {
       // The backend is about to kill every LUMEN process and relaunch a fresh
       // one for the new style; nothing else in this window matters anymore.
       $('#saveSettings').disabled = true;
-      toast('Стиль станції змінено — перезапускаю LUMEN Radio…');
+      toast('Стиль станції змінено — перезапускаю Vector Radio…');
       return;
     }
     if (result.tracks) {
@@ -2330,6 +3038,7 @@ $('#saveSettings').onclick = async () => {
       }
       state.audioTrackId = null;
       state.playing = false;
+      syncPlaybackUi();
       state.broadcastStarted = false;
       state.autoplayBlocked = false;
       state.sessionPlayedTrackIds = new Set();
@@ -2338,7 +3047,7 @@ $('#saveSettings').onclick = async () => {
       state.upcomingIndices = [];
       state.index = 0;
       state.tracks = result.tracks;
-      $('#play').textContent = '▶';
+      syncPlaybackUi();
       $('#nowTitle').textContent = 'Оберіть трек';
       $('#nowArtist').textContent = 'AI підбирає нові треки під новий стиль…';
       $('#intro').textContent = 'Підводка зʼявиться, коли AI знайде перший трек нового стилю.';
@@ -2359,13 +3068,7 @@ $('#saveSettings').onclick = async () => {
   }
 };
 
-setInterval(() => {
-  const local = state.localAudio;
-  const current = local?.currentTime || 0;
-  const duration = local?.duration || 0;
-  $('#elapsed').textContent = `${Math.floor(current / 60)}:${String(Math.floor(current % 60)).padStart(2, '0')}`;
-  $('#progress i').style.width = (duration && Number.isFinite(duration) ? current / duration * 100 : 0) + '%';
-}, 1000);
+setInterval(updatePlaybackProgress, 500);
 
 setInterval(() => {
   if (booted) void refreshPilotClock();

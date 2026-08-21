@@ -973,7 +973,7 @@ def contextual_fallback_copy(track, current, style, context, plan, short=False):
         if (plan or {}).get("clock_slot_id") == "hour_open":
             persona = ((context or {}).get("personality") or {}).get("persona") or {}
             host_name = persona.get("name") or "Адам Вектор"
-            station_name = station.get("name") or "LUMEN RADIO"
+            station_name = station.get("name") or "Vector Radio"
             return (
                 f"Я — {host_name}, цифровий ведучий {station_name}. "
                 f"У {city} зараз {exact_time}. Цю годину відкриває [[NEXT_TRACK]]."
@@ -2988,7 +2988,7 @@ support it. If the topic is sensitive, set sensitive=true."""
         )
         if prompt_changed:
             if self._enable_auto_restart:
-                log_lines.append("Перезапускаю LUMEN Radio, щоб застосувати новий стиль…")
+                log_lines.append("Перезапускаю Vector Radio, щоб застосувати новий стиль…")
                 result["restarting"] = True
                 self._schedule_restart()
             else:
@@ -3966,7 +3966,14 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
         title_core_words = set(candidate_title_words - artist_words)
         if len(title_parts) == 2:
             left_words = set(cls._normalize_music_text(title_parts[0]).split())
-            right_words = source_title_words(title_parts[1])
+            # Official uploads often append a translation, year, mix name or
+            # release note in parentheses after the real title.  That suffix
+            # must not make a one-word title fail precision validation, e.g.
+            # "SadSvit - Касета (Cassette 2021)".
+            right_title = re.sub(
+                r"\s*[\[(][^\])]{1,120}[\])]\s*$", "", title_parts[1],
+            ).strip()
+            right_words = source_title_words(right_title or title_parts[1])
             title_core_words = right_words
             artist_recall = len(artist_words & left_words) / len(artist_words)
             artist_precision = len(artist_words & left_words) / max(1, len(left_words))
@@ -4124,6 +4131,160 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
             progress_callback=progress_callback,
         )
 
+    def _download_playlist_entry_from_youtube_url(
+        self, recommendation, output_dir, *, validator,
+        progress_callback=None, queue_progress=False,
+    ):
+        """Resolve one fixed playlist entry before handing it to Downloader.
+
+        The AI owns only the artist/title playlist. Google supplies candidate
+        YouTube URLs, yt-dlp validates their real metadata, and LUMEN Downloader
+        receives a direct URL with search disabled. Metadata search is a bounded
+        fallback when Google is blocked or returns no valid result.
+        """
+        artist = str(recommendation.get("artist") or "").strip()
+        title = str(recommendation.get("title") or "").strip()
+        query = f"{artist} - {title}"
+        settings = self.db.settings()
+        errors = []
+        attempted_ids = set()
+
+        def direct_candidates(results, resolver_label):
+            for resolved in results or []:
+                raw_url = str(resolved.get("url") or "").strip()
+                video_id = self.music_research.youtube_video_id(raw_url)
+                if not video_id or video_id in attempted_ids:
+                    continue
+                attempted_ids.add(video_id)
+                url = f"https://www.youtube.com/watch?v={video_id}"
+                if queue_progress:
+                    self._set_queue_progress(
+                        "resolved", 18,
+                        f"{resolver_label}: YouTube-посилання знайдено",
+                        track=query,
+                        source=resolver_label,
+                        youtube_url=url,
+                    )
+                try:
+                    LOGGER.info(
+                        "LUMEN Downloader direct URL: %s -> %s (%s)",
+                        query, url, resolver_label,
+                    )
+                    downloaded = self._download_audio_with_lumen(
+                        url,
+                        output_dir,
+                        search=False,
+                        music_search=False,
+                        validator=validator,
+                        progress_callback=progress_callback,
+                    )
+                    return downloaded, {
+                        **resolved,
+                        "id": video_id,
+                        "url": url,
+                        "resolver": resolver_label,
+                        "query": query,
+                    }
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Direct YouTube candidate rejected for %s (%s): %s",
+                        query, url, exc,
+                    )
+                    errors.append(f"{resolver_label} {video_id}: {exc}")
+            return None
+
+        if queue_progress:
+            self._set_queue_progress(
+                "searching", 12, "Google: шукаю YouTube-посилання",
+                track=query, source="google",
+            )
+        try:
+            google_result = self.music_research.search_youtube_on_google(
+                artist, title, limit=5, allow_browser=True,
+            )
+            selected = direct_candidates(
+                google_result.get("results", []), "Google",
+            )
+            if selected:
+                return selected
+            if google_result.get("error"):
+                errors.append(f'Google: {google_result["error"]}')
+        except Exception as exc:
+            LOGGER.warning("Google YouTube resolver failed for %s: %s", query, exc)
+            errors.append(f"Google: {exc}")
+
+        if queue_progress:
+            self._set_queue_progress(
+                "searching", 15,
+                "Google не дав точного URL — перевіряю YouTube metadata",
+                track=query, source="youtube-metadata",
+            )
+        try:
+            fallback = self.music_research.search_music(
+                f"{query} official audio",
+                limit=5,
+                youtube_api_key=self._youtube_key(settings),
+                allow_browser=False,
+            )
+            selected = direct_candidates(
+                fallback.get("results", []), "YouTube metadata",
+            )
+            if selected:
+                return selected
+            for attempt in fallback.get("attempts", []):
+                if attempt.get("error"):
+                    errors.append(
+                        f'{attempt.get("provider", "metadata")}: {attempt["error"]}'
+                    )
+        except Exception as exc:
+            LOGGER.warning("YouTube metadata fallback failed for %s: %s", query, exc)
+            errors.append(f"YouTube metadata: {exc}")
+
+        detail = errors[-1] if errors else "немає придатного YouTube-посилання"
+        raise RuntimeError(f"Не вдалося знайти точний YouTube URL для {query}. {detail}")
+
+    def _cache_track_cover(self, video_id):
+        """Best-effort local YouTube preview cache; never blocks playback."""
+        video_id = str(video_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            return ""
+        cover_dir = self.root / "cache" / "covers"
+        destination = cover_dir / f"{video_id}.jpg"
+        relative = destination.relative_to(self.root).as_posix()
+        try:
+            if destination.is_file() and destination.stat().st_size > 512:
+                return relative
+            request = urllib.request.Request(
+                f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                headers={
+                    "User-Agent": "Mozilla/5.0 VectorRadio/1.0",
+                    "Accept": "image/avif,image/webp,image/jpeg,image/*",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = response.read(4 * 1024 * 1024 + 1)
+            if len(payload) <= 512 or len(payload) > 4 * 1024 * 1024:
+                raise ValueError("thumbnail size is outside the allowed range")
+            is_jpeg = payload.startswith(b"\xff\xd8\xff")
+            is_png = payload.startswith(b"\x89PNG\r\n\x1a\n")
+            is_webp = payload.startswith(b"RIFF") and payload[8:12] == b"WEBP"
+            if not (is_jpeg or is_png or is_webp):
+                raise ValueError("thumbnail payload is not a supported image")
+            cover_dir.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_suffix(
+                f".tmp-{os.getpid()}-{threading.get_ident()}"
+            )
+            try:
+                temporary.write_bytes(payload)
+                temporary.replace(destination)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+            return relative
+        except Exception as exc:
+            LOGGER.info("Track cover cache unavailable for %s: %s", video_id, exc)
+            return ""
+
     def _set_queue_progress(
         self, stage, percent=0, message="", track="", **details,
     ):
@@ -4143,7 +4304,7 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
 
     def _refill_discovery_plan_cache(self, settings, excluded_tracks):
         plan = self._queue_search_plan(
-            settings, excluded_tracks, use_research_tools=True,
+            settings, excluded_tracks, use_research_tools=False,
         )
         romantic_evening = self._is_romantic_evening_profile(
             settings.get("station_prompt", DEFAULTS["station_prompt"])
@@ -4262,15 +4423,6 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
         excluded_tracks.extend(
             self._playlist_track_refs(settings.get("ai_previous_playlist", "[]"))
         )
-        excluded_track_keys = {
-            (
-                self._normalize_music_text(track.get("artist")),
-                self._normalize_music_text(track.get("title")),
-            )
-            for track in excluded_tracks
-            if str(track.get("artist") or "").strip()
-            and str(track.get("title") or "").strip()
-        }
         source_ids = {
             str(item.get("source_id") or "") for item in history
             if item.get("source_id")
@@ -4306,7 +4458,6 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
         candidate = None
         downloaded = None
         download_errors = []
-        attempted_artist_fallbacks = set()
         search_plan = {"target_mood": [], "avoid": []}
         refreshed_plan = False
         max_attempts = 16
@@ -4349,11 +4500,6 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
                 return True
 
             query = f'{recommendation["artist"]} - {recommendation["title"]}'
-            self._set_queue_progress(
-                "searching", 18,
-                "Шукаю точний офіційний аудіозапис",
-                track=query,
-            )
 
             def download_progress(progress, selected=query):
                 raw_percent = float(progress.get("percent") or 0)
@@ -4368,14 +4514,12 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
                     eta=progress.get("eta", 0),
                 )
             try:
-                LOGGER.info("LUMEN Downloader searching audio: %s", query)
-                downloaded = self._download_audio_with_lumen(
-                    query,
+                downloaded, resolved_url = self._download_playlist_entry_from_youtube_url(
+                    recommendation,
                     output_dir,
-                    search=True,
-                    music_search=True,
                     validator=validator,
                     progress_callback=download_progress,
+                    queue_progress=True,
                 )
                 if not accepted:
                     raise RuntimeError(
@@ -4387,88 +4531,20 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
                 candidate.update({
                     "query": query,
                     "recommendation": recommendation,
+                    "resolver": resolved_url.get("resolver", ""),
+                    "resolved_url": resolved_url.get("url", ""),
                 })
                 LOGGER.info(
-                    "LUMEN Downloader completed: %s -> %s",
-                    query, downloaded.get("path"),
+                    "Resolved playlist entry completed: %s -> %s via %s",
+                    query, downloaded.get("path"), candidate["resolver"],
                 )
                 break
             except Exception as exc:
-                LOGGER.warning("LUMEN Downloader rejected %s: %s", query, exc)
+                downloaded = None
+                candidate = None
+                LOGGER.warning("Playlist entry rejected %s: %s", query, exc)
                 download_errors.append(f"{query}: {exc}")
-                if recommendation_artist in attempted_artist_fallbacks:
-                    continue
-                attempted_artist_fallbacks.add(recommendation_artist)
-
-                artist_accepted = {}
-
-                def artist_validator(info, selected_artist=recommendation["artist"]):
-                    checked = self._download_info_candidate(info)
-                    if not self._queue_candidate_allowed(
-                        checked, settings, blocked_words, source_ids,
-                    ):
-                        return False
-                    if not self._candidate_matches_artist(checked, selected_artist):
-                        return False
-                    canonical_title = self._canonical_candidate_title(
-                        checked, selected_artist,
-                    )
-                    corrected_key = (
-                        self._normalize_music_text(selected_artist),
-                        self._normalize_music_text(canonical_title),
-                    )
-                    if not all(corrected_key) or corrected_key in excluded_track_keys:
-                        return False
-                    checked["canonical_title"] = canonical_title
-                    checked["match_score"] = 0.85
-                    artist_accepted.clear()
-                    artist_accepted.update(checked)
-                    return True
-
-                artist_query = f'{recommendation["artist"]} official audio'
-                self._set_queue_progress(
-                    "searching", 18,
-                    "Уточнюю реальну назву треку цього виконавця",
-                    track=artist_query,
-                )
-                try:
-                    downloaded = self._download_audio_with_lumen(
-                        artist_query,
-                        output_dir,
-                        search=True,
-                        music_search=False,
-                        validator=artist_validator,
-                        progress_callback=lambda progress, selected=artist_query: (
-                            download_progress(progress, selected)
-                        ),
-                    )
-                    if not artist_accepted:
-                        raise RuntimeError(
-                            "резервний результат не пройшов перевірку виконавця"
-                        )
-                    corrected_title = artist_accepted["canonical_title"]
-                    corrected_recommendation = {
-                        **recommendation,
-                        "title": corrected_title,
-                    }
-                    candidate = dict(artist_accepted)
-                    candidate.update({
-                        "query": f'{recommendation["artist"]} - {corrected_title}',
-                        "recommendation": corrected_recommendation,
-                    })
-                    LOGGER.info(
-                        "LUMEN Downloader corrected AI title: %s -> %s - %s",
-                        query, recommendation["artist"], corrected_title,
-                    )
-                    break
-                except Exception as fallback_exc:
-                    LOGGER.warning(
-                        "LUMEN Downloader artist fallback rejected %s: %s",
-                        recommendation["artist"], fallback_exc,
-                    )
-                    download_errors.append(
-                        f'{recommendation["artist"]}: {fallback_exc}'
-                    )
+                continue
         if not downloaded or not candidate:
             detail = download_errors[-1] if download_errors else "немає нових рекомендацій"
             raise RuntimeError(f"LUMEN Downloader не знайшов відповідний аудіотрек. {detail}")
@@ -4502,6 +4578,7 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
         duration = float(info.get("duration") or candidate.get("duration") or 0)
         source_id = str(info.get("id") or candidate["id"])
         source_title = str(info.get("title") or candidate["title"])
+        cover_path = self._cache_track_cover(source_id)
         self.db.update_track(
             track["id"],
             youtube_id=source_id, youtube_title=source_title,
@@ -4509,6 +4586,7 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
             bpm=analysis["bpm"], energy=analysis["energy"], mood=analysis["mood"],
             genre=str(candidate["recommendation"].get("genre") or "").strip(),
             match_score=candidate["match_score"], library_source="ai",
+            **({"cover_path": cover_path} if cover_path else {}),
         )
         result = self.db.track(track["id"])
         self._remember_ai_tracks([result])
@@ -4545,11 +4623,9 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
             return True
 
         try:
-            downloaded = self._download_audio_with_lumen(
-                f'{track["artist"]} - {track["title"]}',
+            downloaded, resolved_url = self._download_playlist_entry_from_youtube_url(
+                recommendation,
                 self.root / "downloads",
-                search=True,
-                music_search=True,
                 validator=validator,
             )
             prepared = Path(downloaded["path"]).resolve()
@@ -4558,14 +4634,17 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
             downloaded_candidate = self._download_info_candidate(info)
             candidate = accepted or downloaded_candidate
             duration = float(info.get("duration") or candidate.get("duration") or 0)
+            source_id = str(info.get("id") or candidate.get("id") or "")
+            cover_path = self._cache_track_cover(source_id)
             self.db.update_track(
                 track["id"],
                 local_path=relative,
-                youtube_id=str(info.get("id") or candidate.get("id") or ""),
+                youtube_id=source_id,
                 youtube_title=str(info.get("title") or candidate.get("title") or ""),
                 match_score=float(candidate.get("match_score") or 1),
                 duration_ms=round(duration * 1000),
                 status="ready",
+                **({"cover_path": cover_path} if cover_path else {}),
             )
             updated = self.db.track(track["id"])
             return {
@@ -4573,10 +4652,12 @@ artistBreakthroughYear, mood, popularityScore і retrievalClass. Лише оди
                 "track": updated,
                 "local_path": relative,
                 "cached": False,
+                "source_url": resolved_url.get("url", ""),
+                "resolver": resolved_url.get("resolver", ""),
             }
         except Exception as exc:
             self.db.update_track(track["id"], status="unavailable")
-            return {"ok": False, "error": f"LUMEN Downloader: {exc}"}
+            return {"ok": False, "error": f"Пошук треку: {exc}"}
 
     def _speech_asset(self, text, voice=DEFAULT_TTS_VOICE, rate="-2%"):
         speech_text = normalize_for_speech(text, self.db.tracks())
@@ -4858,7 +4939,12 @@ artist_speech і title_speech мають бути записані україн�
         video_id = (video_id or "").strip()
         if not video_id:
             return {"ok": False, "error": "Порожній video ID"}
-        self.db.update_track(int(track_id), youtube_id=video_id, youtube_title="Вказано вручну", status="ready")
+        cover_path = self._cache_track_cover(video_id)
+        self.db.update_track(
+            int(track_id), youtube_id=video_id,
+            youtube_title="Вказано вручну", status="ready",
+            **({"cover_path": cover_path} if cover_path else {}),
+        )
         return {"ok": True}
 
     def _choose_intro_style(self, current, verified_fact, requested=""):
